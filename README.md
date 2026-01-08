@@ -47,7 +47,8 @@ Default Base: **Ctrl + Alt** (customizable).
 | **Maximize** | `Enter` | Full Screen |
 | **Restore Layout** | `Backspace` | Restore all windows to saved positions |
 | **Save Layout** | `S` | Save current positions |
-| **Next / Prev Screen** | `Ctrl+Opt+Cmd` + `→` / `←` | Move window to Next/Prev Monitor |
+
+**Cyclic Snapping**: Press `Left`/`Right` twice to snap, then move to the prev/next screen.
 
 ### 3. Automation / Stream Deck
 Control the manager using system URLs:

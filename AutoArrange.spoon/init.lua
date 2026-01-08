@@ -142,11 +142,7 @@ obj.config = {
         -- Extras
         maximize = {base, "Return"},
         center = {base, "C"},
-        restoreLayout = {base, "delete"}, -- Backspace
-        
-        -- Displays
-        nextScreen = {{"ctrl", "alt", "cmd"}, "Right"},
-        prevScreen = {{"ctrl", "alt", "cmd"}, "Left"}
+        restoreLayout = {base, "delete"} -- Backspace
     }
 }
 
@@ -637,12 +633,7 @@ function obj.buildMenu()
     add("↺  Restore Layout", "restoreLayout", obj.restoreLayout)
     table.insert(menuTable, { title = "-" })
 
-    -- Section 5: Displays
-    add("⇥  Next Screen", "nextScreen", obj.moveWindowToNextScreen)
-    add("⇤  Prev Screen", "prevScreen", obj.moveWindowToPrevScreen)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 6: Profiles & Config
+    -- Section 5: Profiles & Config
     table.insert(menuTable, { title = "Active: " .. active, disabled = true })
     
     if profiles[configId] and profiles[configId].layouts then
@@ -730,32 +721,77 @@ function obj.bindHotkeys()
     -- Extras
     bind("maximize", function() obj.snapWindow("maximize") end)
     bind("center", function() obj.snapWindow("center") end)
-    
-    -- Displays
-    bind("nextScreen", obj.moveWindowToNextScreen)
-    bind("prevScreen", obj.moveWindowToPrevScreen)
 end
 
 -- SNAP & GRID HELPERS
+-- Track last snap for cycle detection
+obj.lastSnap = {
+    winId = nil,
+    direction = nil,
+    time = 0
+}
+
 function obj.snapWindow(direction)
     local win = hs.window.focusedWindow()
     if not win then return end
     
+    local currentTime = os.time()
+    local winId = win:id()
     local f = win:frame()
     local screen = win:screen()
     local max = screen:frame()
     
-    -- Halves
+    -- Cycle detection: if same window + direction within 2 seconds
+    local isCycle = (obj.lastSnap.winId == winId and 
+                     obj.lastSnap.direction == direction and 
+                     (currentTime - obj.lastSnap.time) < 2)
+    
+    -- Helper to check if window is already in target position
+    local function isAlreadySnapped(targetFrame)
+        local tolerance = 5
+        return math.abs(f.x - targetFrame.x) < tolerance and
+               math.abs(f.y - targetFrame.y) < tolerance and
+               math.abs(f.w - targetFrame.w) < tolerance and
+               math.abs(f.h - targetFrame.h) < tolerance
+    end
+    
+    -- Halves - with cycle to next/prev screen
     if direction == "left" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h
+        local targetFrame = {
+            x = max.x,
+            y = max.y,
+            w = max.w / 2,
+            h = max.h
+        }
+        
+        if isCycle and isAlreadySnapped(targetFrame) then
+            -- Already snapped left, move to prev screen
+            win:moveOneScreenWest()
+            hs.alert.show("◧ Moved to Prev Screen")
+            obj.lastSnap.winId = nil -- Reset to avoid triple-press confusion
+            return
+        else
+            f = targetFrame
+        end
+        
     elseif direction == "right" then
-        f.x = max.x + (max.w / 2)
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h
+        local targetFrame = {
+            x = max.x + (max.w / 2),
+            y = max.y,
+            w = max.w / 2,
+            h = max.h
+        }
+        
+        if isCycle and isAlreadySnapped(targetFrame) then
+            -- Already snapped right, move to next screen
+            win:moveOneScreenEast()
+            hs.alert.show("◨ Moved to Next Screen")
+            obj.lastSnap.winId = nil
+            return
+        else
+            f = targetFrame
+        end
+        
     elseif direction == "top" then
         f.x = max.x
         f.y = max.y
@@ -830,23 +866,13 @@ function obj.snapWindow(direction)
     end
     
     win:setFrame(f)
-end
-
--- Screen Movement Helpers
-function obj.moveWindowToNextScreen()
-    local win = hs.window.focusedWindow()
-    if win then 
-        win:moveOneScreenEast()
-        hs.alert.show("Moved to Next Screen")
-    end
-end
-
-function obj.moveWindowToPrevScreen()
-    local win = hs.window.focusedWindow()
-    if win then 
-        win:moveOneScreenWest() 
-        hs.alert.show("Moved to Prev Screen")
-    end
+    
+    -- Update last snap tracking
+    obj.lastSnap = {
+        winId = winId,
+        direction = direction,
+        time = currentTime
+    }
 end
 
 -- Init
