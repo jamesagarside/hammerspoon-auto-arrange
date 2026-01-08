@@ -142,7 +142,11 @@ obj.config = {
         -- Extras
         maximize = {base, "Return"},
         center = {base, "C"},
-        restoreLayout = {base, "delete"} -- Backspace
+        restoreLayout = {base, "delete"}, -- Backspace
+        
+        -- Displays
+        nextScreen = {{"ctrl", "alt", "cmd"}, "Right"},
+        prevScreen = {{"ctrl", "alt", "cmd"}, "Left"}
     }
 }
 
@@ -633,7 +637,12 @@ function obj.buildMenu()
     add("↺  Restore Layout", "restoreLayout", obj.restoreLayout)
     table.insert(menuTable, { title = "-" })
 
-    -- Section 5: Profiles & Config
+    -- Section 5: Displays
+    add("⇥  Next Screen", "nextScreen", obj.moveWindowToNextScreen)
+    add("⇤  Prev Screen", "prevScreen", obj.moveWindowToPrevScreen)
+    table.insert(menuTable, { title = "-" })
+
+    -- Section 6: Profiles & Config
     table.insert(menuTable, { title = "Active: " .. active, disabled = true })
     
     if profiles[configId] and profiles[configId].layouts then
@@ -721,6 +730,10 @@ function obj.bindHotkeys()
     -- Extras
     bind("maximize", function() obj.snapWindow("maximize") end)
     bind("center", function() obj.snapWindow("center") end)
+    
+    -- Displays
+    bind("nextScreen", obj.moveWindowToNextScreen)
+    bind("prevScreen", obj.moveWindowToPrevScreen)
 end
 
 -- SNAP & GRID HELPERS
@@ -817,6 +830,23 @@ function obj.snapWindow(direction)
     end
     
     win:setFrame(f)
+end
+
+-- Screen Movement Helpers
+function obj.moveWindowToNextScreen()
+    local win = hs.window.focusedWindow()
+    if win then 
+        win:moveOneScreenEast()
+        hs.alert.show("Moved to Next Screen")
+    end
+end
+
+function obj.moveWindowToPrevScreen()
+    local win = hs.window.focusedWindow()
+    if win then 
+        win:moveOneScreenWest() 
+        hs.alert.show("Moved to Prev Screen")
+    end
 end
 
 -- Init
