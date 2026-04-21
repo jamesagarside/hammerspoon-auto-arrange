@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.5.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package AutoArrange.spoon
+        run: |
+          zip -r AutoArrange.spoon.zip AutoArrange.spoon/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: AutoArrange ${{ steps.version.outputs.tag }}
+          body: |
+            ## Installation
+
+            1. Download **AutoArrange.spoon.zip** from the assets below and unzip it.
+            2. Double-click `AutoArrange.spoon` to install it (Hammerspoon will handle this automatically).
+            3. Or manually move `AutoArrange.spoon` to `~/.hammerspoon/Spoons/`.
+            4. Add the following to your `~/.hammerspoon/init.lua`:
+
+            ```lua
+            hs.loadSpoon("AutoArrange")
+            spoon.AutoArrange:start()
+            ```
+
+            5. Reload Hammerspoon.
+          files: AutoArrange.spoon.zip
+          generate_release_notes: true
