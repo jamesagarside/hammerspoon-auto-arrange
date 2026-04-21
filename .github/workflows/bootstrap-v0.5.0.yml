@@ -1,0 +1,56 @@
+name: Bootstrap v0.5.0 Release
+
+on:
+  push:
+    branches:
+      - "copilot/add-build-and-release-workflow"
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    name: Create v0.5.0 Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if v0.5.0 release already exists
+        id: check
+        run: |
+          if gh release view v0.5.0 --repo "${{ github.repository }}" &>/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package AutoArrange.spoon
+        if: steps.check.outputs.skip == 'false'
+        run: zip -r AutoArrange.spoon.zip AutoArrange.spoon/
+
+      - name: Create v0.5.0 Release
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.5.0
+          name: AutoArrange v0.5.0
+          body: |
+            ## Installation
+
+            1. Download **AutoArrange.spoon.zip** from the assets below and unzip it.
+            2. Double-click `AutoArrange.spoon` to install it (Hammerspoon will handle this automatically).
+            3. Or manually move `AutoArrange.spoon` to `~/.hammerspoon/Spoons/`.
+            4. Add the following to your `~/.hammerspoon/init.lua`:
+
+            ```lua
+            hs.loadSpoon("AutoArrange")
+            spoon.AutoArrange:start()
+            ```
+
+            5. Reload Hammerspoon.
+          files: AutoArrange.spoon.zip
+          generate_release_notes: true
