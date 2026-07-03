@@ -1,21 +1,22 @@
---- === AutoArrange ===
+--- === SnapBack ===
 ---
---- A comprehensive window manager with auto-restore profiles.
+--- Layout profiles for every display setup: your windows snap back into place
+--- when you dock, undock, or your screens wake.
 ---
---- Download: https://github.com/jamesagarside/hammerspoon-auto-arrange
+--- Download: https://github.com/jamesagarside/snapback-macos
 ---
 
 local obj = {}
 obj.__index = obj
 
 -- Metadata
-obj.name = "AutoArrange"
-obj.version = "1.0"
+obj.name = "SnapBack"
+obj.version = "0.6.0"
 obj.author = "James Garside"
-obj.homepage = "https://github.com/jamesagarside/hammerspoon-auto-arrange"
-obj.license = "MIT - https://opensource.org/licenses/MIT"
+obj.homepage = "https://github.com/jamesagarside/snapback-macos"
+obj.license = "Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0"
 
-obj.logger = hs.logger.new('AutoArrange', 'info')
+obj.logger = hs.logger.new('SnapBack', 'info')
 
 -- Configuration
 -- Configuration is now dynamic (see below)
@@ -23,7 +24,8 @@ obj.logger = hs.logger.new('AutoArrange', 'info')
 
 -- Use hs.configdir or resolve ~/.hammerspoon safely
 local configDir = hs.fs.pathToAbsolute("~/.hammerspoon")
-obj.storagePath = configDir .. "/window-layouts"
+obj.storagePath = configDir .. "/snapback"
+obj.legacyStoragePath = configDir .. "/window-layouts"
 obj.profilesFile = obj.storagePath .. "/profiles.json"
 obj.settingsFile = obj.storagePath .. "/settings.json"
 obj.dirCreated = false
@@ -31,8 +33,11 @@ obj.dirCreated = false
 -- Ensure storage directory exists
 function obj.ensureStorageExists()
     if obj.dirCreated then return end
-    local attr = hs.fs.attributes(obj.storagePath)
-    if not attr then
+    -- Migrate data saved under the pre-rename (AutoArrange) storage location
+    if not hs.fs.attributes(obj.storagePath) and hs.fs.attributes(obj.legacyStoragePath) then
+        os.rename(obj.legacyStoragePath, obj.storagePath)
+    end
+    if not hs.fs.attributes(obj.storagePath) then
         hs.fs.mkdir(obj.storagePath)
     end
     obj.dirCreated = true
@@ -63,7 +68,7 @@ end
 -- UI: Prompt to set base modifiers
 function obj.configureModifiers()
     local current = table.concat(obj.getBaseModifiers(), ", ")
-    local button, input = hs.dialog.textPrompt("Window Layout Config", "Enter base modifiers (comma separated):", current, "Save & Reload", "Cancel")
+    local button, input = hs.dialog.textPrompt("SnapBack Config", "Enter base modifiers (comma separated):", current, "Save & Reload", "Cancel")
     
     if button == "Save & Reload" and input then
         local parts = {}
@@ -101,8 +106,9 @@ function obj.setAutoRestoreMode(mode)
     settings.autoRestoreMode = mode
     obj.saveSettings(settings)
     hs.alert.show("Auto-Restore: " .. mode:upper())
-    -- Force menu rebuild to show checkmark
-    obj.menubar:setMenu(obj.buildMenu()) 
+    -- Pass the builder function, not its result — a table here would freeze
+    -- the menu into a static snapshot that never reflects later changes
+    obj.menubar:setMenu(obj.buildMenu)
 end
 
 function obj.getAutoRestoreMode()
@@ -488,7 +494,7 @@ function obj.handleUrlEvent(eventName, params)
     obj.logger.i("URL Event Received: " .. tostring(eventName))
     obj.logger.i("Params: " .. hs.inspect(params))
 
-    if eventName ~= "windowlayout" then return end
+    if eventName ~= "snapback" and eventName ~= "windowlayout" then return end
     
     local action = params.action
     local profile = params.profile
@@ -519,7 +525,7 @@ function obj.handleUrlEvent(eventName, params)
             hs.alert.show("No profiles found")
         end
     else
-        hs.alert.show("WL: Unknown URL action")
+        hs.alert.show("SnapBack: Unknown URL action")
         obj.logger.e("Unknown URL Action: " .. tostring(action))
     end
 end
@@ -529,19 +535,45 @@ function obj.updateMenubarTitle()
         local configId = obj.getDisplayConfigId()
         local profiles = obj.loadProfiles()
         local active = obj.getActiveProfileName(profiles, configId)
-        obj.menubar:setTitle("WL: " .. active)
+        obj.menubar:setTitle("SB: " .. active)
     end
 end
 
--- Handle screen configuration changes
+-- Handle screen configuration changes (dock/undock, display sleep/wake).
+-- macOS fires several watcher events while the displays settle, so debounce
+-- and only act once the configuration has been stable for a few seconds.
 function obj.handleScreenChanged()
     obj.logger.i("Display configuration changed")
     obj.updateMenubarTitle()
+
+    if obj.restoreTimer then obj.restoreTimer:stop() end
+    obj.restoreTimer = hs.timer.doAfter(3, function()
+        local mode = obj.getAutoRestoreMode()
+        if mode == "disabled" then return end
+
+        local profiles = obj.loadProfiles()
+        local configId = obj.getDisplayConfigId()
+        if not profiles[configId] then
+            obj.logger.i("No saved profile for display config: " .. configId)
+            return
+        end
+
+        if mode == "auto" then
+            obj.restoreLayout()
+        elseif mode == "prompt" then
+            local active = obj.getActiveProfileName(profiles, configId)
+            local button = hs.dialog.blockAlert("SnapBack",
+                string.format("Display setup changed. Restore layout '%s'?", active),
+                "Restore", "Not Now")
+            if button == "Restore" then obj.restoreLayout() end
+        end
+    end)
 end
 
--- Open Config File
-function obj.editConfig()
-    hs.execute("open " .. os.getenv("HOME") .. "/.hammerspoon/window-layout.lua")
+-- Reveal the profiles/settings folder in Finder
+function obj.openStorageFolder()
+    obj.ensureStorageExists()
+    hs.execute(string.format("open %q", obj.storagePath))
 end
 
 -- Show Hotkeys Cheat Sheet
@@ -664,7 +696,7 @@ function obj.buildMenu()
     })
     
     table.insert(menuTable, { title = "⚙  Set Base Modifiers...", fn = obj.configureModifiers })
-    table.insert(menuTable, { title = "Edit Config File...", fn = obj.editConfig })
+    table.insert(menuTable, { title = "Open Data Folder...", fn = obj.openStorageFolder })
     table.insert(menuTable, { title = "Reload Config", fn = hs.reload })
     
     return menuTable
@@ -675,7 +707,7 @@ function obj.setupMenubar()
     if obj.menubar then return end
     
     obj.menubar = hs.menubar.new()
-    obj.menubar:setTooltip("Window Layout Manager")
+    obj.menubar:setTooltip("SnapBack — window layout manager")
     obj.updateMenubarTitle()
     
     obj.menubar:setMenu(obj.buildMenu)
@@ -933,10 +965,11 @@ function obj.start()
     obj.screenWatcher = hs.screen.watcher.new(obj.handleScreenChanged)
     obj.screenWatcher:start()
     
-    -- Bind URL Events
+    -- Bind URL Events ("windowlayout" kept for pre-rename Stream Deck setups)
+    hs.urlevent.bind("snapback", obj.handleUrlEvent)
     hs.urlevent.bind("windowlayout", obj.handleUrlEvent)
-    
-    obj.logger.i("Window Layout Manager started (Smart Match, Auto-Restore & Snapping)")
+
+    obj.logger.i("SnapBack started (profiles, auto-restore & snapping)")
 end
 
 return obj

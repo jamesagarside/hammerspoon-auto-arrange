@@ -25,35 +25,37 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Package AutoArrange.spoon
+      - name: Package SnapBack.spoon
         run: |
-          zip -r AutoArrange.spoon.zip AutoArrange.spoon/
+          zip -r SnapBack.spoon.zip SnapBack.spoon/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: AutoArrange ${{ steps.version.outputs.tag }}
+          name: SnapBack ${{ steps.version.outputs.tag }}
           body: |
             ## Installation
 
-            1. Download **AutoArrange.spoon.zip** from the assets below and unzip it.
-            2. Double-click `AutoArrange.spoon` to install it (Hammerspoon will handle this automatically).
-            3. Or manually move `AutoArrange.spoon` to `~/.hammerspoon/Spoons/`.
+            1. Download **SnapBack.spoon.zip** from the assets below and unzip it.
+            2. Double-click `SnapBack.spoon` to install it (Hammerspoon will handle this automatically).
+            3. Or manually move `SnapBack.spoon` to `~/.hammerspoon/Spoons/`.
             4. Add the following to your `~/.hammerspoon/init.lua`:
 
             ```lua
-            hs.loadSpoon("AutoArrange")
-            spoon.AutoArrange:start()
+            hs.loadSpoon("SnapBack")
+            spoon.SnapBack:start()
             ```
 
             5. Reload Hammerspoon.
-          files: AutoArrange.spoon.zip
+          files: SnapBack.spoon.zip
           generate_release_notes: true
