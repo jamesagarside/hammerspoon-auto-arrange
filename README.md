@@ -1,6 +1,17 @@
-# SnapBack
+<p align="center">
+  <img src="assets/logo.svg" alt="SnapBack — macOS window layout manager" width="120">
+</p>
 
-**Your windows, back where they belong.**
+<h1 align="center">SnapBack</h1>
+
+<p align="center"><strong>Your windows, back where they belong.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/jamesagarside/snapback/releases"><img src="https://img.shields.io/github/v/release/jamesagarside/snapback" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS-blue" alt="Platform: macOS">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/jamesagarside/snapback" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/built%20on-Hammerspoon-8b5cf6" alt="Built on Hammerspoon">
+</p>
 
 You unplug your MacBook from your monitors and every window piles onto the laptop screen. You plug back in — or your displays simply wake from sleep — and macOS has shuffled everything. SnapBack fixes that: it remembers a window layout for **every display setup** you use (desk, office, laptop-only) and puts everything back automatically when your screens change.
 
@@ -18,7 +29,7 @@ Built on [Hammerspoon](https://www.hammerspoon.org/). Free and open source.
 ## Installation
 
 1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility permission (System Settings → Privacy & Security → Accessibility).
-2. Download **SnapBack.spoon.zip** from the [latest release](https://github.com/jamesagarside/snapback-macos/releases) and unzip it.
+2. Download **SnapBack.spoon.zip** from the [latest release](https://github.com/jamesagarside/snapback/releases) and unzip it.
 3. Double-click `SnapBack.spoon` (Hammerspoon installs it), or move it to `~/.hammerspoon/Spoons/` manually.
 4. Add this to your `~/.hammerspoon/init.lua`:
 
@@ -69,15 +80,23 @@ Default base modifiers: **⌃⌥⌘** (Ctrl + Alt + Cmd) — customizable via **
 
 Layouts and settings are stored as plain JSON in `~/.hammerspoon/snapback/` (menubar → *Open Data Folder...*). Nothing leaves your machine.
 
-## Compatibility & known limitations
+## Supported platforms
 
-* **macOS**: Tested on macOS Sonoma. Accessibility permission required (it's how any window manager moves windows).
+| Platform | Status |
+| :--- | :--- |
+| macOS 14 Sonoma | Developed and tested |
+| macOS 13 Ventura / macOS 15 Sequoia | Expected to work (anything recent Hammerspoon supports) — not regularly tested, reports welcome |
+
+Requires [Hammerspoon](https://www.hammerspoon.org/) (free) and Accessibility permission — that's how any macOS window manager moves windows.
+
+## Known limitations
+
 * **Spaces**: Moving windows between Spaces relies on private macOS APIs and may fail silently on some macOS versions; windows on non-visible Spaces may not be capturable.
 * **Display identity**: Profiles are currently keyed by display IDs that can occasionally change across reboots; migration to stable UUIDs is planned.
 
 ## Alternatives
 
-If you only need snapping, [Rectangle](https://rectangleapp.com/) is excellent and simpler to install. SnapBack is for people whose window arrangements get destroyed by docking/undocking/display sleep and who want them to come back on their own — plus Stream Deck/URL automation and the hackability of Hammerspoon underneath.
+Looking for a free, open-source alternative to Magnet? For snapping alone, [Rectangle](https://rectangleapp.com/) is excellent and simpler to install. SnapBack is for people whose window arrangement gets destroyed by docking, undocking, or display sleep and who want it to come back on its own — plus Stream Deck/URL automation, per-display-setup layout profiles, and the hackability of Hammerspoon underneath.
 
 ## License
 

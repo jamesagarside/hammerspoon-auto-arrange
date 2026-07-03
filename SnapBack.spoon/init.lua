@@ -3,7 +3,7 @@
 --- Layout profiles for every display setup: your windows snap back into place
 --- when you dock, undock, or your screens wake.
 ---
---- Download: https://github.com/jamesagarside/snapback-macos
+--- Download: https://github.com/jamesagarside/snapback
 ---
 
 local obj = {}
@@ -13,7 +13,7 @@ obj.__index = obj
 obj.name = "SnapBack"
 obj.version = "0.6.0"
 obj.author = "James Garside"
-obj.homepage = "https://github.com/jamesagarside/snapback-macos"
+obj.homepage = "https://github.com/jamesagarside/snapback"
 obj.license = "Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0"
 
 obj.logger = hs.logger.new('SnapBack', 'info')
