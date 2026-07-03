@@ -28,6 +28,16 @@ Built on [Hammerspoon](https://www.hammerspoon.org/). Free and open source.
 
 ## Installation
 
+### One-line install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jamesagarside/snapback/main/scripts/install.sh | bash
+```
+
+This installs Hammerspoon (via Homebrew) if you don't have it, installs SnapBack, and wires it into your Hammerspoon config. It's idempotent — re-run it any time to upgrade. On first install, grant Hammerspoon Accessibility permission when macOS prompts (System Settings → Privacy & Security → Accessibility).
+
+### Manual install
+
 1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility permission (System Settings → Privacy & Security → Accessibility).
 2. Download **SnapBack.spoon.zip** from the [latest release](https://github.com/jamesagarside/snapback/releases) and unzip it.
 3. Double-click `SnapBack.spoon` (Hammerspoon installs it), or move it to `~/.hammerspoon/Spoons/` manually.
