@@ -47,6 +47,7 @@ end
 local spoonPath = debug.getinfo(1, "S").source:sub(2):match("(.*/)") or ""
 local Store = dofile(spoonPath .. "store.lua")
 local geometry = dofile(spoonPath .. "geometry.lua")
+local matcher = dofile(spoonPath .. "matcher.lua")
 
 -- Profile Store: profiles, layouts, and settings behind one interface.
 -- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
@@ -172,90 +173,6 @@ function obj.getSpaceID(screenUUID, index)
     return nil
 end
 
--- SMART MATCHING HELPERS
-
--- Normalize title for fuzzy matching (remove " - AppName", numbers, special chars)
-function obj.normalizeTitle(title)
-    if not title then return "" end
-    -- Lowercase
-    local s = string.lower(title)
-    -- Remove common browser suffixes
-    s = s:gsub(" %- google chrome$", "")
-    s = s:gsub(" %- visual studio code$", "")
-    -- Remove notification counters like "(1)"
-    s = s:gsub("%s?%d+%s?", "")
-    -- Remove special chars
-    s = s:gsub("[%p%c]", "")
-    return s
-end
-
--- Calculate string similarity (0.0 to 1.0) - Jaro-Winkler-ish simplified
-function obj.calculateSimilarity(s1, s2)
-    local longer = #s1 > #s2 and s1 or s2
-    local shorter = #s1 > #s2 and s2 or s1
-    if #longer == 0 then return 1.0 end
-    
-    -- Exact substring check is usually good enough for windows
-    if string.find(longer, shorter, 1, true) then
-        return 0.9 -- High score for substring match
-    end
-    
-    return 0.0
-end
-
--- Find best match for a saved window from available windows
-function obj.findBestMatch(savedWin, availableWins, usedWinIDs)
-    -- 1. ID Match (Perfect)
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] and win:id() == savedWin.id then
-            return win, "ID"
-        end
-    end
-
-    -- 2. Exact Title Match (Good)
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app and win:title() == savedWin.title then
-                return win, "Exact"
-            end
-        end
-    end
-    
-    -- 3. Fuzzy Title Match (Okay)
-    local bestWin = nil
-    local bestScore = 0
-    local savedNorm = obj.normalizeTitle(savedWin.title)
-    
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app then
-                local currentNorm = obj.normalizeTitle(win:title())
-                local score = obj.calculateSimilarity(savedNorm, currentNorm)
-                if score > 0.5 and score > bestScore then
-                    bestScore = score
-                    bestWin = win
-                end
-            end
-        end
-    end
-    
-    if bestWin then return bestWin, "Fuzzy" end
-    
-    -- 4. App Slotting (Last Resort) - Just find *any* window of same app
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app then
-                return win, "Slot"
-            end
-        end
-    end
-    
-    return nil, nil
-end
-
 -- Capture current window layout
 function obj.captureLayout(profileName)
     -- Use default filter but allow all spaces
@@ -342,60 +259,63 @@ function obj.restoreLayout()
     end
     
     local windows = layoutData.windows
-    -- Get ALL windows
-    local allWindows = hs.window.filter.new():setDefaultFilter({}):getWindows()
-    local restoreCount = 0
-    local usedWinIDs = {} -- Track assigned windows
-    local matchStats = {ID=0, Exact=0, Fuzzy=0, Slot=0}
-    
+
+    -- Snapshot live windows into plain records for the matcher; the live
+    -- window rides along on the record for the move step below
+    local candidates = {}
+    for _, win in ipairs(hs.window.filter.new():setDefaultFilter({}):getWindows()) do
+        local app = win:application()
+        table.insert(candidates, {
+            id = win:id(),
+            app = app and app:name() or nil,
+            title = win:title(),
+            win = win
+        })
+    end
+
     -- Map Screens for Current Setup
     local currentScreens = {}
     for _, s in ipairs(hs.screen.allScreens()) do
         currentScreens[s:name()] = s -- fallback by name
         currentScreens[s:getUUID()] = s -- pref by UUID
     end
-    
-    local spaceMap, allSpaces = obj.getSpaceMap()
 
-    for _, savedWin in ipairs(windows) do
-        -- Find Best Match
-        local match, matchType = obj.findBestMatch(savedWin, allWindows, usedWinIDs)
-        
-        if match then
-            usedWinIDs[match:id()] = true
-            matchStats[matchType] = matchStats[matchType] + 1
-            
-            -- 1. Identify Target Screen
-            local targetScreen = currentScreens[savedWin.screen_uuid] or currentScreens[savedWin.screen]
-            
-            -- 2. Identify Target Space ID
-            local targetSpaceID = nil
-            if targetScreen and savedWin.space_index then
-               targetSpaceID = obj.getSpaceID(targetScreen:getUUID(), savedWin.space_index)
-            end
-            
-            -- 3. Move to Space (if needed and valid)
-            if targetSpaceID then
-                hs.spaces.moveWindowToSpace(match, targetSpaceID)
-                -- Small delay might be needed for space move animation?
-                -- hs.timer.usleep(100000) -- 0.1s
-            end
-            
-            -- 4. Move Frame (Geometry)
-            if targetScreen then
-                match:move(savedWin.frame, targetScreen, true)
-            else
-                -- Fallback to current screen frame only
-                match:setFrame(savedWin.frame)
-            end
-            
-            restoreCount = restoreCount + 1
+    local matches, unmatched = matcher.assign(windows, candidates)
+    local matchStats = {ID=0, Exact=0, Fuzzy=0, Slot=0}
+
+    for _, m in ipairs(matches) do
+        local savedWin = m.saved
+        local match = m.candidate.win
+        matchStats[m.matchType] = matchStats[m.matchType] + 1
+
+        -- 1. Identify Target Screen
+        local targetScreen = currentScreens[savedWin.screen_uuid] or currentScreens[savedWin.screen]
+
+        -- 2. Identify Target Space ID
+        local targetSpaceID = nil
+        if targetScreen and savedWin.space_index then
+           targetSpaceID = obj.getSpaceID(targetScreen:getUUID(), savedWin.space_index)
+        end
+
+        -- 3. Move to Space (if needed and valid)
+        if targetSpaceID then
+            hs.spaces.moveWindowToSpace(match, targetSpaceID)
+        end
+
+        -- 4. Move Frame (Geometry)
+        if targetScreen then
+            match:move(savedWin.frame, targetScreen, true)
         else
-            obj.logger.d("Could not find match for: " .. savedWin.app .. " - " .. savedWin.title)
+            -- Fallback to current screen frame only
+            match:setFrame(savedWin.frame)
         end
     end
-    
-    local msg = string.format("Restored '%s' (%d wins)", activeName, restoreCount)
+
+    for _, savedWin in ipairs(unmatched) do
+        obj.logger.d("Could not find match for: " .. tostring(savedWin.app) .. " - " .. tostring(savedWin.title))
+    end
+
+    local msg = string.format("Restored '%s' (%d wins)", activeName, #matches)
     -- Add detail if matches were imprecise
     if matchStats.Fuzzy > 0 or matchStats.Slot > 0 then
         msg = msg .. string.format("\n(Fuzzy: %d, Slot: %d)", matchStats.Fuzzy, matchStats.Slot)
