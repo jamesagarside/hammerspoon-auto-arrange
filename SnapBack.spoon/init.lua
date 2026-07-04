@@ -43,31 +43,23 @@ function obj.ensureStorageExists()
     obj.dirCreated = true
 end
 
--- Load general settings
-function obj.loadSettings()
-    obj.ensureStorageExists()
-    local settings = hs.json.read(obj.settingsFile)
-    return settings or {}
-end
+-- Submodules live next to this file inside the Spoon
+local spoonPath = debug.getinfo(1, "S").source:sub(2):match("(.*/)") or ""
+local Store = dofile(spoonPath .. "store.lua")
 
--- Save general settings
-function obj.saveSettings(settings)
-    obj.ensureStorageExists()
-    hs.json.write(settings, obj.settingsFile, true, true)
-end
-
--- Get Base Modifiers (default: Cmd+Alt+Ctrl)
-function obj.getBaseModifiers()
-    local settings = obj.loadSettings()
-    if settings.baseModifiers then
-        return settings.baseModifiers
-    end
-    return {"cmd", "alt", "ctrl"}
-end
+-- Profile Store: profiles, layouts, and settings behind one interface.
+-- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
+obj.store = Store.new{
+    profilesFile = obj.profilesFile,
+    settingsFile = obj.settingsFile,
+    readJson = function(path) return hs.json.read(path) end,
+    writeJson = function(data, path) hs.json.write(data, path, true, true) end,
+    ensureStorage = function() obj.ensureStorageExists() end,
+}
 
 -- UI: Prompt to set base modifiers
 function obj.configureModifiers()
-    local current = table.concat(obj.getBaseModifiers(), ", ")
+    local current = table.concat(obj.store:baseModifiers(), ", ")
     local button, input = hs.dialog.textPrompt("SnapBack Config", "Enter base modifiers (comma separated):", current, "Save & Reload", "Cancel")
     
     if button == "Save & Reload" and input then
@@ -90,9 +82,7 @@ function obj.configureModifiers()
         end
         
         if #parts > 0 then
-            local settings = obj.loadSettings()
-            settings.baseModifiers = parts
-            obj.saveSettings(settings)
+            obj.store:setSetting("baseModifiers", parts)
             hs.reload()
         else
             hs.alert.show("Invalid input")
@@ -102,25 +92,20 @@ end
 
 -- Toggle Auto-Restore Mode
 function obj.setAutoRestoreMode(mode)
-    local settings = obj.loadSettings()
-    settings.autoRestoreMode = mode
-    obj.saveSettings(settings)
+    obj.store:setSetting("autoRestoreMode", mode)
     hs.alert.show("Auto-Restore: " .. mode:upper())
     -- Pass the builder function, not its result — a table here would freeze
     -- the menu into a static snapshot that never reflects later changes
     obj.menubar:setMenu(obj.buildMenu)
 end
 
-function obj.getAutoRestoreMode()
-    local settings = obj.loadSettings()
-    return settings.autoRestoreMode or "auto"
-end
-
--- Generate Configuration based on settings
--- We define keys here, but modifiers come from settings
-local base = obj.getBaseModifiers()
-obj.config = {
-    hotkeys = {
+-- Generate Configuration based on settings.
+-- Built from start(), not at require time, so loading the Spoon never
+-- touches disk; keys are fixed here, modifiers come from settings.
+function obj.buildConfig()
+    local base = obj.store:baseModifiers()
+    obj.config = {
+        hotkeys = {
         save = {base, "S"},
         restore = {base, "R"},
         
@@ -149,20 +134,8 @@ obj.config = {
         maximize = {base, "Return"},
         center = {base, "C"},
         restoreLayout = {base, "delete"} -- Backspace
+        }
     }
-}
-
--- Save data to JSON file
-function obj.saveProfiles(profiles)
-    obj.ensureStorageExists()
-    hs.json.write(profiles, obj.profilesFile, true, true)
-end
-
--- Load data from JSON file
-function obj.loadProfiles()
-    obj.ensureStorageExists()
-    local profiles = hs.json.read(obj.profilesFile)
-    return profiles or {}
 end
 
 -- Get unique hash for current display configuration
@@ -174,12 +147,6 @@ function obj.getDisplayConfigId()
     end
     table.sort(identifiers)
     return table.concat(identifiers, "_")
-end
-
--- HELPER: Get active profile name for current config
-function obj.getActiveProfileName(profiles, configId)
-    if not profiles[configId] then return "Default" end
-    return profiles[configId].active or "Default"
 end
 
 -- Helper: Get Space Index map
@@ -331,45 +298,10 @@ function obj.captureLayout(profileName)
     end
     
     obj.logger.i(string.format("Captured %d windows across spaces", #layout))
-    
-    local profiles = obj.loadProfiles()
+
     local configId = obj.getDisplayConfigId()
-    
-    -- Initialize structure if missing
-    if not profiles[configId] then
-        profiles[configId] = {
-            active = "Default",
-            layouts = {}
-        }
-    end
-    
-    -- Migration check: if old format (direct windows property), move to Default
-    if profiles[configId].windows then
-        profiles[configId].layouts = {}
-        profiles[configId].layouts["Default"] = {
-            windows = profiles[configId].windows,
-            timestamp = profiles[configId].timestamp
-        }
-        profiles[configId].windows = nil
-        profiles[configId].timestamp = nil
-        profiles[configId].active = "Default"
-    end
-    
-    -- Determine target name
-    local targetName = profileName or profiles[configId].active or "Default"
-    
-    -- Save new layout
-    if not profiles[configId].layouts then profiles[configId].layouts = {} end
-    
-    profiles[configId].layouts[targetName] = {
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        windows = layout,
-        display_count = #hs.screen.allScreens()
-    }
-    profiles[configId].active = targetName
-    
-    obj.saveProfiles(profiles)
-    
+    local targetName = obj.store:saveLayout(configId, profileName, layout, #hs.screen.allScreens())
+
     hs.alert.show(string.format("Saved Profile: %s", targetName))
     obj.updateMenubarTitle()
 end
@@ -384,12 +316,8 @@ end
 
 -- Switch to a different profile
 function obj.switchProfile(name)
-    local profiles = obj.loadProfiles()
     local configId = obj.getDisplayConfigId()
-    
-    if profiles[configId] then
-        profiles[configId].active = name
-        obj.saveProfiles(profiles)
+    if obj.store:setActive(configId, name) then
         obj.updateMenubarTitle()
         obj.restoreLayout() -- Auto-restore on switch
     end
@@ -397,31 +325,16 @@ end
 
 -- Restore window layout for current display config
 function obj.restoreLayout()
-    local profiles = obj.loadProfiles()
     local configId = obj.getDisplayConfigId()
-    
-    if not profiles[configId] then
+
+    if not obj.store:hasConfig(configId) then
         hs.alert.show("No profiles for this display setup")
         return
     end
 
-    -- Migration check
-    if profiles[configId].windows then
-        -- Handle legacy format by treating it as Default
-        local windows = profiles[configId].windows
-        -- restore logic below...
-    end
+    local activeName = obj.store:activeProfileName(configId)
+    local layoutData = obj.store:activeLayout(configId)
 
-    local activeName = obj.getActiveProfileName(profiles, configId)
-    local layoutData = nil
-    
-    if profiles[configId].layouts and profiles[configId].layouts[activeName] then
-        layoutData = profiles[configId].layouts[activeName]
-    elseif profiles[configId].windows then
-        -- Legacy fallback
-        layoutData = profiles[configId]
-    end
-    
     if not layoutData then
         hs.alert.show("Profile '" .. activeName .. "' is empty")
         return
@@ -512,11 +425,10 @@ function obj.handleUrlEvent(eventName, params)
     elseif action == "switch" and profile then
         obj.switchProfile(profile)
     elseif action == "list" then
-        local profiles = obj.loadProfiles()
-        local configId = obj.getDisplayConfigId()
-        if profiles[configId] and profiles[configId].layouts then
+        local names = obj.store:profileNames(obj.getDisplayConfigId())
+        if #names > 0 then
             local doc = "Available Profiles:\n"
-            for name, _ in pairs(profiles[configId].layouts) do
+            for _, name in ipairs(names) do
                 doc = doc .. "- " .. name .. "\n"
             end
             hs.alert.show(doc)
@@ -532,9 +444,7 @@ end
 
 function obj.updateMenubarTitle()
     if obj.menubar then
-        local configId = obj.getDisplayConfigId()
-        local profiles = obj.loadProfiles()
-        local active = obj.getActiveProfileName(profiles, configId)
+        local active = obj.store:activeProfileName(obj.getDisplayConfigId())
         obj.menubar:setTitle("SB: " .. active)
     end
 end
@@ -548,12 +458,11 @@ function obj.handleScreenChanged()
 
     if obj.restoreTimer then obj.restoreTimer:stop() end
     obj.restoreTimer = hs.timer.doAfter(3, function()
-        local mode = obj.getAutoRestoreMode()
+        local mode = obj.store:autoRestoreMode()
         if mode == "disabled" then return end
 
-        local profiles = obj.loadProfiles()
         local configId = obj.getDisplayConfigId()
-        if not profiles[configId] then
+        if not obj.store:hasConfig(configId) then
             obj.logger.i("No saved profile for display config: " .. configId)
             return
         end
@@ -561,7 +470,7 @@ function obj.handleScreenChanged()
         if mode == "auto" then
             obj.restoreLayout()
         elseif mode == "prompt" then
-            local active = obj.getActiveProfileName(profiles, configId)
+            local active = obj.store:activeProfileName(configId)
             local button = hs.dialog.blockAlert("SnapBack",
                 string.format("Display setup changed. Restore layout '%s'?", active),
                 "Restore", "Not Now")
@@ -624,9 +533,9 @@ end
 -- Helper to build the menu table (extracted for refreshing)
 function obj.buildMenu()
     local configId = obj.getDisplayConfigId()
-    local profiles = obj.loadProfiles()
-    local active = obj.getActiveProfileName(profiles, configId)
-    local restoreMode = obj.getAutoRestoreMode()
+    local active = obj.store:activeProfileName(configId)
+    local profileNames = obj.store:profileNames(configId)
+    local restoreMode = obj.store:autoRestoreMode()
     
     local menuTable = {}
     
@@ -668,9 +577,9 @@ function obj.buildMenu()
     -- Section 5: Profiles & Config
     table.insert(menuTable, { title = "Active: " .. active, disabled = true })
     
-    if profiles[configId] and profiles[configId].layouts then
+    if #profileNames > 0 then
         local profileMenu = {}
-        for name, _ in pairs(profiles[configId].layouts) do
+        for _, name in ipairs(profileNames) do
             table.insert(profileMenu, {
                 title = name,
                 checked = (name == active),
@@ -910,10 +819,11 @@ end
 -- Init
 function obj.start()
     obj.ensureStorageExists()
-    
+
     -- Performance: Disable window animations for instant snapping
     hs.window.animationDuration = 0
-    
+
+    obj.buildConfig()
     obj.setupMenubar()
     obj.bindHotkeys()
     
