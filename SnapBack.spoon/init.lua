@@ -46,6 +46,7 @@ end
 -- Submodules live next to this file inside the Spoon
 local spoonPath = debug.getinfo(1, "S").source:sub(2):match("(.*/)") or ""
 local Store = dofile(spoonPath .. "store.lua")
+local geometry = dofile(spoonPath .. "geometry.lua")
 
 -- Profile Store: profiles, layouts, and settings behind one interface.
 -- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
@@ -675,144 +676,39 @@ obj.lastSnap = {
 function obj.snapWindow(direction)
     local win = hs.window.focusedWindow()
     if not win then return end
-    
-    local currentTime = os.time()
-    local winId = win:id()
-    local f = win:frame()
-    local screen = win:screen()
-    local max = screen:frame()
-    
-    -- Cycle detection: if same window + direction within 2 seconds
-    local isCycle = (obj.lastSnap.winId == winId and 
-                     obj.lastSnap.direction == direction and 
-                     (currentTime - obj.lastSnap.time) < 2)
-    
-    -- Helper to check if window is already in target position
-    local function isAlreadySnapped(targetFrame)
-        local tolerance = 5
-        return math.abs(f.x - targetFrame.x) < tolerance and
-               math.abs(f.y - targetFrame.y) < tolerance and
-               math.abs(f.w - targetFrame.w) < tolerance and
-               math.abs(f.h - targetFrame.h) < tolerance
-    end
-    
-    -- Halves - with cycle to next/prev screen
-    if direction == "left" then
-        local targetFrame = {
-            x = max.x,
-            y = max.y,
-            w = max.w / 2,
-            h = max.h
-        }
-        
-        if isCycle and isAlreadySnapped(targetFrame) then
-            -- Already snapped left, move to prev screen
-            win:moveOneScreenWest()
-            hs.alert.show("◧ Moved to Prev Screen")
-            obj.lastSnap.winId = nil -- Reset to avoid triple-press confusion
-            return
-        else
-            f = targetFrame
-        end
-        
-    elseif direction == "right" then
-        local targetFrame = {
-            x = max.x + (max.w / 2),
-            y = max.y,
-            w = max.w / 2,
-            h = max.h
-        }
-        
-        if isCycle and isAlreadySnapped(targetFrame) then
-            -- Already snapped right, move to next screen
-            win:moveOneScreenEast()
-            hs.alert.show("◨ Moved to Next Screen")
-            obj.lastSnap.winId = nil
-            return
-        else
-            f = targetFrame
-        end
-        
-    elseif direction == "top" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w
-        f.h = max.h / 2
-    elseif direction == "bottom" then
-        f.x = max.x
-        f.y = max.y + (max.h / 2)
-        f.w = max.w
-        f.h = max.h / 2
-        
-    -- Quarters (Corners)
-    elseif direction == "topLeft" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "topRight" then
-        f.x = max.x + (max.w / 2)
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "bottomLeft" then
-        f.x = max.x
-        f.y = max.y + (max.h / 2)
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "bottomRight" then
-        f.x = max.x + (max.w / 2)
-        f.y = max.y + (max.h / 2)
-        f.w = max.w / 2
-        f.h = max.h / 2
-        
-    -- Thirds
-    elseif direction == "leftThird" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "centerThird" then
-        f.x = max.x + (max.w / 3)
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "rightThird" then
-        f.x = max.x + (max.w / 3) * 2
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "leftTwoThirds" then
-        f.x = max.x
-        f.y = max.y
-        f.w = (max.w / 3) * 2
-        f.h = max.h
-    elseif direction == "rightTwoThirds" then
-        f.x = max.x + (max.w / 3)
-        f.y = max.y
-        f.w = (max.w / 3) * 2
-        f.h = max.h
-        
-    -- Standard
-    elseif direction == "center" then
-        f.w = max.w * 0.7
-        f.h = max.h * 0.7
-        f.x = max.x + (max.w - f.w) / 2
-        f.y = max.y + (max.h - f.h) / 2
-    elseif direction == "maximize" then
-        f = max
-    elseif direction == "minimize" then
+
+    if direction == "minimize" then
         win:minimize()
         return
     end
-    
-    win:setFrame(f)
-    
-    -- Update last snap tracking
+
+    local now = os.time()
+    local winId = win:id()
+    local target = geometry.frameFor(direction, win:screen():frame())
+    if not target then return end
+
+    -- Pressing the same direction twice on an already-snapped window
+    -- cycles it to the adjacent screen (left/right only)
+    local cycleMove = geometry.cycleMove[direction]
+    if cycleMove and geometry.isCycle(obj.lastSnap, winId, direction, now)
+       and geometry.framesMatch(win:frame(), target) then
+        if cycleMove == "west" then
+            win:moveOneScreenWest()
+            hs.alert.show("◧ Moved to Prev Screen")
+        else
+            win:moveOneScreenEast()
+            hs.alert.show("◨ Moved to Next Screen")
+        end
+        obj.lastSnap.winId = nil -- Reset to avoid triple-press confusion
+        return
+    end
+
+    win:setFrame(target)
+
     obj.lastSnap = {
         winId = winId,
         direction = direction,
-        time = currentTime
+        time = now
     }
 end
 

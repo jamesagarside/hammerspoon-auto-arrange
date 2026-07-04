@@ -54,7 +54,7 @@ function t.test(name, fn)
     end
 end
 
-local specs = { "store_spec" }
+local specs = { "store_spec", "geometry_spec" }
 
 for _, name in ipairs(specs) do
     print(name .. ":")
