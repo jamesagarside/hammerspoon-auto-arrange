@@ -48,6 +48,7 @@ local spoonPath = debug.getinfo(1, "S").source:sub(2):match("(.*/)") or ""
 local Store = dofile(spoonPath .. "store.lua")
 local geometry = dofile(spoonPath .. "geometry.lua")
 local matcher = dofile(spoonPath .. "matcher.lua")
+local actions = dofile(spoonPath .. "actions.lua")
 
 -- Profile Store: profiles, layouts, and settings behind one interface.
 -- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
@@ -101,43 +102,18 @@ function obj.setAutoRestoreMode(mode)
     obj.menubar:setMenu(obj.buildMenu)
 end
 
--- Generate Configuration based on settings.
--- Built from start(), not at require time, so loading the Spoon never
--- touches disk; keys are fixed here, modifiers come from settings.
-function obj.buildConfig()
-    local base = obj.store:baseModifiers()
-    obj.config = {
-        hotkeys = {
-        save = {base, "S"},
-        restore = {base, "R"},
-        
-        -- Halves
-        snapLeft = {base, "Left"},
-        snapRight = {base, "Right"},
-        snapUp = {base, "Up"},
-        snapDown = {base, "Down"},
-        
-        -- Quarters (Corners)
-        topLeft = {base, "U"},
-        topRight = {base, "I"},
-        bottomLeft = {base, "J"},
-        bottomRight = {base, "K"},
-        
-        -- Thirds
-        leftThird = {base, "D"},
-        centerThird = {base, "F"},
-        rightThird = {base, "G"},
-        
-        -- Two Thirds
-        leftTwoThirds = {base, "E"},
-        rightTwoThirds = {base, "T"},
-        
-        -- Extras
-        maximize = {base, "Return"},
-        center = {base, "C"},
-        restoreLayout = {base, "delete"} -- Backspace
-        }
-    }
+-- Resolve a registry row to its callable. Snap rows dispatch to
+-- snapWindow; command rows map to profile operations.
+local commandFns = {
+    save = function() obj.captureLayout(nil) end,
+    restore = function() obj.restoreLayout() end,
+}
+
+local function actionFn(row)
+    if row.snap then
+        return function() obj.snapWindow(row.snap) end
+    end
+    return commandFns[row.command]
 end
 
 -- Get unique hash for current display configuration
@@ -406,49 +382,9 @@ function obj.openStorageFolder()
     hs.execute(string.format("open %q", obj.storagePath))
 end
 
--- Show Hotkeys Cheat Sheet
+-- Show Hotkeys Cheat Sheet — derives from the Action Registry
 function obj.showHotkeys()
-    local keys = obj.config.hotkeys
-    local msg = "Current Hotkeys:\n"
-    
-    local function modStr(mods) return table.concat(mods, "+") end
-    
-    if keys.save then msg = msg .. "- Save: " .. modStr(keys.save[1]) .. " + " .. keys.save[2] .. "\n" end
-    if keys.restore then msg = msg .. "- Restore: " .. modStr(keys.restore[1]) .. " + " .. keys.restore[2] .. "\n" end
-    if keys.snapLeft then msg = msg .. "- Snap Left: " .. modStr(keys.snapLeft[1]) .. " + " .. keys.snapLeft[2] .. "\n" end
-    if keys.snapRight then msg = msg .. "- Snap Right: " .. modStr(keys.snapRight[1]) .. " + " .. keys.snapRight[2] .. "\n" end
-    if keys.snapUp then msg = msg .. "- Maximize: " .. modStr(keys.snapUp[1]) .. " + " .. keys.snapUp[2] .. "\n" end
-    
-    hs.alert.show(msg, 5)
-end
-
--- Helper: Get visual shortcut label
-function obj.getShortcutLabel(keyName)
-    local conf = obj.config.hotkeys[keyName]
-    if not conf then return "" end
-    
-    local mods = conf[1]
-    local key = conf[2]
-    
-    local modMap = {
-        cmd = "⌘", alt = "⌥", ctrl = "⌃", shift = "⇧"
-    }
-    
-    local str = "  "
-    for _, m in ipairs(mods) do
-        str = str .. (modMap[m] or "")
-    end
-    
-    -- Fix key names for display
-    if key == "Left" then key = "←"
-    elseif key == "Right" then key = "→"
-    elseif key == "Up" then key = "↑"
-    elseif key == "Down" then key = "↓"
-    elseif key == "Return" then key = "⏎"
-    elseif key == "delete" then key = "⌫"
-    end
-    
-    return str .. key
+    hs.alert.show(actions.cheatSheet(obj.store:baseModifiers()), 5)
 end
 
 -- Helper to build the menu table (extracted for refreshing)
@@ -457,47 +393,29 @@ function obj.buildMenu()
     local active = obj.store:activeProfileName(configId)
     local profileNames = obj.store:profileNames(configId)
     local restoreMode = obj.store:autoRestoreMode()
-    
+    local base = obj.store:baseModifiers()
+
     local menuTable = {}
-    
-    -- Helper to make adding items cleaner
-    local function add(title, keyName, fn)
-        local label = title .. obj.getShortcutLabel(keyName)
-        table.insert(menuTable, { title = label, fn = fn })
+
+    -- Registry row -> menu item with its shortcut label
+    local function add(row)
+        table.insert(menuTable, {
+            title = row.label .. actions.shortcutLabel(base, row.key),
+            fn = actionFn(row)
+        })
     end
 
-    -- Section 1: Halves
-    add("◧  Left", "snapLeft", function() obj.snapWindow("left") end)
-    add("◨  Right", "snapRight", function() obj.snapWindow("right") end)
-    add("⬒  Top", "snapUp", function() obj.snapWindow("top") end) 
-    add("⬓  Bottom", "snapDown", function() obj.snapWindow("bottom") end)
-    table.insert(menuTable, { title = "-" })
+    -- Snap sections derive from the Action Registry
+    for _, section in ipairs(actions.menuSections) do
+        for _, row in ipairs(actions.list) do
+            if row.section == section then add(row) end
+        end
+        table.insert(menuTable, { title = "-" })
+    end
 
-    -- Section 2: Quarters
-    add("◤  Top Left", "topLeft", function() obj.snapWindow("topLeft") end)
-    add("◥  Top Right", "topRight", function() obj.snapWindow("topRight") end)
-    add("◣  Bottom Left", "bottomLeft", function() obj.snapWindow("bottomLeft") end)
-    add("◢  Bottom Right", "bottomRight", function() obj.snapWindow("bottomRight") end)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 3: Thirds
-    add("⅓  Left Third", "leftThird", function() obj.snapWindow("leftThird") end)
-    add("⅓  Center Third", "centerThird", function() obj.snapWindow("centerThird") end)
-    add("⅓  Right Third", "rightThird", function() obj.snapWindow("rightThird") end)
-    table.insert(menuTable, { title = "-" })
-    add("⅔  Left Two Thirds", "leftTwoThirds", function() obj.snapWindow("leftTwoThirds") end)
-    add("⅔  Right Two Thirds", "rightTwoThirds", function() obj.snapWindow("rightTwoThirds") end)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 4: Maximize / Restore / Center
-    add("⤢  Maximize", "maximize", function() obj.snapWindow("maximize") end)
-    add("✛  Center", "center", function() obj.snapWindow("center") end)
-    add("↺  Restore Layout", "restoreLayout", obj.restoreLayout)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 5: Profiles & Config
+    -- Profiles & Config
     table.insert(menuTable, { title = "Active: " .. active, disabled = true })
-    
+
     if #profileNames > 0 then
         local profileMenu = {}
         for _, name in ipairs(profileNames) do
@@ -509,10 +427,10 @@ function obj.buildMenu()
         end
         table.insert(menuTable, { title = "Switch Profile ▶", menu = profileMenu })
     end
-    
-    add("Save Current Layout", "save", function() obj.captureLayout(nil) end)
+
+    add(actions.byId("save"))
     table.insert(menuTable, { title = "Save as New Profile...", fn = obj.saveAsNewProfile })
-    
+
     table.insert(menuTable, { title = "-" })
     
     -- Auto-Restore Submenu
@@ -525,10 +443,11 @@ function obj.buildMenu()
         }
     })
     
+    table.insert(menuTable, { title = "⌨  Hotkeys Cheat Sheet", fn = obj.showHotkeys })
     table.insert(menuTable, { title = "⚙  Set Base Modifiers...", fn = obj.configureModifiers })
     table.insert(menuTable, { title = "Open Data Folder...", fn = obj.openStorageFolder })
     table.insert(menuTable, { title = "Reload Config", fn = hs.reload })
-    
+
     return menuTable
 end
 
@@ -543,46 +462,14 @@ function obj.setupMenubar()
     obj.menubar:setMenu(obj.buildMenu)
 end
 
--- Bind Hotkeys
--- Bind Hotkeys
+-- Bind Hotkeys — every registry row, one bind each. Note: this fixes an
+-- old divergence where Up/Down maximized/minimized while the menu's
+-- Top/Bottom snapped to halves; both now snap to halves.
 function obj.bindHotkeys()
-    local keys = obj.config.hotkeys
-    
-    local function bind(keyId, fn)
-        if keys[keyId] then
-            hs.hotkey.bind(keys[keyId][1], keys[keyId][2], fn)
-        end
+    local base = obj.store:baseModifiers()
+    for _, row in ipairs(actions.list) do
+        hs.hotkey.bind(base, row.key, actionFn(row))
     end
-    
-    -- Save & Restore
-    bind("save", function() obj.captureLayout(nil) end)
-    bind("restore", obj.restoreLayout)
-    bind("restoreLayout", obj.restoreLayout) -- Alias for Backspace
-    
-    -- Halves
-    bind("snapLeft", function() obj.snapWindow("left") end)
-    bind("snapRight", function() obj.snapWindow("right") end)
-    bind("snapUp", function() obj.snapWindow("maximize") end)
-    bind("snapDown", function() obj.snapWindow("minimize") end)
-    
-    -- Corners
-    bind("topLeft", function() obj.snapWindow("topLeft") end)
-    bind("topRight", function() obj.snapWindow("topRight") end)
-    bind("bottomLeft", function() obj.snapWindow("bottomLeft") end)
-    bind("bottomRight", function() obj.snapWindow("bottomRight") end)
-    
-    -- Thirds
-    bind("leftThird", function() obj.snapWindow("leftThird") end)
-    bind("centerThird", function() obj.snapWindow("centerThird") end)
-    bind("rightThird", function() obj.snapWindow("rightThird") end)
-    
-    -- Two Thirds
-    bind("leftTwoThirds", function() obj.snapWindow("leftTwoThirds") end)
-    bind("rightTwoThirds", function() obj.snapWindow("rightTwoThirds") end)
-    
-    -- Extras
-    bind("maximize", function() obj.snapWindow("maximize") end)
-    bind("center", function() obj.snapWindow("center") end)
 end
 
 -- SNAP & GRID HELPERS
@@ -639,7 +526,6 @@ function obj.start()
     -- Performance: Disable window animations for instant snapping
     hs.window.animationDuration = 0
 
-    obj.buildConfig()
     obj.setupMenubar()
     obj.bindHotkeys()
     
