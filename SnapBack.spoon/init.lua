@@ -49,6 +49,7 @@ local Store = dofile(spoonPath .. "store.lua")
 local geometry = dofile(spoonPath .. "geometry.lua")
 local matcher = dofile(spoonPath .. "matcher.lua")
 local actions = dofile(spoonPath .. "actions.lua")
+local minimap = dofile(spoonPath .. "minimap.lua")
 
 -- Profile Store: profiles, layouts, and settings behind one interface.
 -- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
@@ -387,6 +388,22 @@ function obj.showHotkeys()
     hs.alert.show(actions.cheatSheet(obj.store:baseModifiers()), 5)
 end
 
+-- Minimap image: the current display arrangement with the active profile's
+-- saved windows ghosted in — the dropdown's picture of what "snap back" means
+function obj.minimapImage(configId)
+    local screens = {}
+    for _, s in ipairs(hs.screen.allScreens()) do
+        local f = s:fullFrame()
+        table.insert(screens, {
+            x = f.x, y = f.y, w = f.w, h = f.h,
+            name = s:name(), uuid = s:getUUID(),
+        })
+    end
+    local layoutData = obj.store:activeLayout(configId)
+    local windows = layoutData and layoutData.windows or {}
+    return minimap.render(minimap.layout(screens, windows))
+end
+
 -- Helper to build the menu table (extracted for refreshing)
 function obj.buildMenu()
     local configId = obj.getDisplayConfigId()
@@ -396,6 +413,20 @@ function obj.buildMenu()
     local base = obj.store:baseModifiers()
 
     local menuTable = {}
+
+    -- Minimap at the top; profiles are the product, so the first thing the
+    -- dropdown shows is this setup and where windows will land. Guarded so a
+    -- drawing failure can never take the whole menu down with it.
+    local okMap, mapImage = pcall(obj.minimapImage, configId)
+    if okMap and mapImage then
+        table.insert(menuTable, {
+            image = mapImage,
+            title = "",
+            tooltip = "Current displays with the active profile's saved windows — click to restore",
+            fn = obj.restoreLayout,
+        })
+        table.insert(menuTable, { title = "-" })
+    end
 
     -- Registry row -> menu item with its shortcut label
     local function add(row)

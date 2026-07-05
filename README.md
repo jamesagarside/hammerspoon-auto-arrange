@@ -15,6 +15,10 @@
 
 You unplug your MacBook from your monitors and every window piles onto the laptop screen. You plug back in — or your displays simply wake from sleep — and macOS has shuffled everything. SnapBack fixes that: it remembers a window layout for **every display setup** you use (desk, office, laptop-only) and puts everything back automatically when your screens change.
 
+<p align="center">
+  <img src="assets/snapback-story.png" alt="1: docked at your desk, the layout is saved as a profile. 2: unplug and macOS piles every window onto the laptop screen. 3: plug back in and SnapBack restores the matching profile automatically." width="880">
+</p>
+
 Built on [Hammerspoon](https://www.hammerspoon.org/). Free and open source.
 
 ## Why SnapBack
@@ -25,6 +29,12 @@ Built on [Hammerspoon](https://www.hammerspoon.org/). Free and open source.
 * **Snapping included**: Halves, thirds, two-thirds, quarters, center, maximize — with hotkeys and a menubar menu. Press Left/Right twice to throw a window to the previous/next screen. Zero animation delay.
 * **Automation-friendly**: Trigger everything from a Stream Deck, Shortcuts, or scripts via `hammerspoon://` URLs.
 * **Spaces support (best-effort)**: Attempts to remember which Space a window belongs to. macOS APIs for Spaces are private and can be unreliable on recent macOS versions.
+
+Everything lives in the menubar. The map at the top of the menu is your actual display arrangement, drawn to scale, with the active profile's saved windows in place — so you can see what will snap back before it does:
+
+<p align="center">
+  <img src="assets/menubar-dropdown.png" alt="The SnapBack menubar dropdown: a to-scale map of the current three-display arrangement with saved windows drawn in, snapping actions with their hotkeys, and profile switching with a Default and a Desk profile." width="450">
+</p>
 
 ## Installation
 
