@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SnapBack logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+
+  <!-- Ghost outline: where the window belongs -->
+  <rect x="92" y="92" width="216" height="172" rx="22" fill="none"
+        stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="13"
+        stroke-dasharray="30 22" stroke-linecap="round"/>
+
+  <!-- The window that drifted away -->
+  <rect x="204" y="248" width="216" height="172" rx="22" fill="#FFFFFF"/>
+  <circle cx="238" cy="282" r="11" fill="#FF5F57"/>
+  <circle cx="272" cy="282" r="11" fill="#FEBC2E"/>
+  <circle cx="306" cy="282" r="11" fill="#28C840"/>
+
+  <!-- Snap-back arrow -->
+  <path d="M 198 390 Q 106 368 101 300" fill="none"
+        stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
+  <polygon points="101,250 74,304 128,304" fill="#FFFFFF"/>
+</svg>

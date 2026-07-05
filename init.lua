@@ -1,11 +1,6 @@
--- Window Layout Manager
+-- SnapBack — window layout manager
 require("hs.ipc") -- Enable CLI handling
 
--- Load the AutoArrange Spoon
--- (Ensure AutoArrange.spoon is in ~/.hammerspoon/Spoons/)
-hs.loadSpoon("AutoArrange")
-spoon.AutoArrange:start()
-
--- Legacy Load (Disabled)
--- local windowLayout = require("window-layout")
--- windowLayout.start()
+-- (Ensure SnapBack.spoon is in ~/.hammerspoon/Spoons/)
+hs.loadSpoon("SnapBack")
+spoon.SnapBack:start()
