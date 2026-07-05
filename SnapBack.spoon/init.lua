@@ -43,31 +43,27 @@ function obj.ensureStorageExists()
     obj.dirCreated = true
 end
 
--- Load general settings
-function obj.loadSettings()
-    obj.ensureStorageExists()
-    local settings = hs.json.read(obj.settingsFile)
-    return settings or {}
-end
+-- Submodules live next to this file inside the Spoon
+local spoonPath = debug.getinfo(1, "S").source:sub(2):match("(.*/)") or ""
+local Store = dofile(spoonPath .. "store.lua")
+local geometry = dofile(spoonPath .. "geometry.lua")
+local matcher = dofile(spoonPath .. "matcher.lua")
+local actions = dofile(spoonPath .. "actions.lua")
+local minimap = dofile(spoonPath .. "minimap.lua")
 
--- Save general settings
-function obj.saveSettings(settings)
-    obj.ensureStorageExists()
-    hs.json.write(settings, obj.settingsFile, true, true)
-end
-
--- Get Base Modifiers (default: Cmd+Alt+Ctrl)
-function obj.getBaseModifiers()
-    local settings = obj.loadSettings()
-    if settings.baseModifiers then
-        return settings.baseModifiers
-    end
-    return {"cmd", "alt", "ctrl"}
-end
+-- Profile Store: profiles, layouts, and settings behind one interface.
+-- Hammerspoon supplies the storage adapters; tests supply in-memory ones.
+obj.store = Store.new{
+    profilesFile = obj.profilesFile,
+    settingsFile = obj.settingsFile,
+    readJson = function(path) return hs.json.read(path) end,
+    writeJson = function(data, path) hs.json.write(data, path, true, true) end,
+    ensureStorage = function() obj.ensureStorageExists() end,
+}
 
 -- UI: Prompt to set base modifiers
 function obj.configureModifiers()
-    local current = table.concat(obj.getBaseModifiers(), ", ")
+    local current = table.concat(obj.store:baseModifiers(), ", ")
     local button, input = hs.dialog.textPrompt("SnapBack Config", "Enter base modifiers (comma separated):", current, "Save & Reload", "Cancel")
     
     if button == "Save & Reload" and input then
@@ -90,9 +86,7 @@ function obj.configureModifiers()
         end
         
         if #parts > 0 then
-            local settings = obj.loadSettings()
-            settings.baseModifiers = parts
-            obj.saveSettings(settings)
+            obj.store:setSetting("baseModifiers", parts)
             hs.reload()
         else
             hs.alert.show("Invalid input")
@@ -102,67 +96,25 @@ end
 
 -- Toggle Auto-Restore Mode
 function obj.setAutoRestoreMode(mode)
-    local settings = obj.loadSettings()
-    settings.autoRestoreMode = mode
-    obj.saveSettings(settings)
+    obj.store:setSetting("autoRestoreMode", mode)
     hs.alert.show("Auto-Restore: " .. mode:upper())
     -- Pass the builder function, not its result — a table here would freeze
     -- the menu into a static snapshot that never reflects later changes
     obj.menubar:setMenu(obj.buildMenu)
 end
 
-function obj.getAutoRestoreMode()
-    local settings = obj.loadSettings()
-    return settings.autoRestoreMode or "auto"
-end
-
--- Generate Configuration based on settings
--- We define keys here, but modifiers come from settings
-local base = obj.getBaseModifiers()
-obj.config = {
-    hotkeys = {
-        save = {base, "S"},
-        restore = {base, "R"},
-        
-        -- Halves
-        snapLeft = {base, "Left"},
-        snapRight = {base, "Right"},
-        snapUp = {base, "Up"},
-        snapDown = {base, "Down"},
-        
-        -- Quarters (Corners)
-        topLeft = {base, "U"},
-        topRight = {base, "I"},
-        bottomLeft = {base, "J"},
-        bottomRight = {base, "K"},
-        
-        -- Thirds
-        leftThird = {base, "D"},
-        centerThird = {base, "F"},
-        rightThird = {base, "G"},
-        
-        -- Two Thirds
-        leftTwoThirds = {base, "E"},
-        rightTwoThirds = {base, "T"},
-        
-        -- Extras
-        maximize = {base, "Return"},
-        center = {base, "C"},
-        restoreLayout = {base, "delete"} -- Backspace
-    }
+-- Resolve a registry row to its callable. Snap rows dispatch to
+-- snapWindow; command rows map to profile operations.
+local commandFns = {
+    save = function() obj.captureLayout(nil) end,
+    restore = function() obj.restoreLayout() end,
 }
 
--- Save data to JSON file
-function obj.saveProfiles(profiles)
-    obj.ensureStorageExists()
-    hs.json.write(profiles, obj.profilesFile, true, true)
-end
-
--- Load data from JSON file
-function obj.loadProfiles()
-    obj.ensureStorageExists()
-    local profiles = hs.json.read(obj.profilesFile)
-    return profiles or {}
+local function actionFn(row)
+    if row.snap then
+        return function() obj.snapWindow(row.snap) end
+    end
+    return commandFns[row.command]
 end
 
 -- Get unique hash for current display configuration
@@ -174,12 +126,6 @@ function obj.getDisplayConfigId()
     end
     table.sort(identifiers)
     return table.concat(identifiers, "_")
-end
-
--- HELPER: Get active profile name for current config
-function obj.getActiveProfileName(profiles, configId)
-    if not profiles[configId] then return "Default" end
-    return profiles[configId].active or "Default"
 end
 
 -- Helper: Get Space Index map
@@ -202,90 +148,6 @@ function obj.getSpaceID(screenUUID, index)
         return spaces[screenUUID][index]
     end
     return nil
-end
-
--- SMART MATCHING HELPERS
-
--- Normalize title for fuzzy matching (remove " - AppName", numbers, special chars)
-function obj.normalizeTitle(title)
-    if not title then return "" end
-    -- Lowercase
-    local s = string.lower(title)
-    -- Remove common browser suffixes
-    s = s:gsub(" %- google chrome$", "")
-    s = s:gsub(" %- visual studio code$", "")
-    -- Remove notification counters like "(1)"
-    s = s:gsub("%s?%d+%s?", "")
-    -- Remove special chars
-    s = s:gsub("[%p%c]", "")
-    return s
-end
-
--- Calculate string similarity (0.0 to 1.0) - Jaro-Winkler-ish simplified
-function obj.calculateSimilarity(s1, s2)
-    local longer = #s1 > #s2 and s1 or s2
-    local shorter = #s1 > #s2 and s2 or s1
-    if #longer == 0 then return 1.0 end
-    
-    -- Exact substring check is usually good enough for windows
-    if string.find(longer, shorter, 1, true) then
-        return 0.9 -- High score for substring match
-    end
-    
-    return 0.0
-end
-
--- Find best match for a saved window from available windows
-function obj.findBestMatch(savedWin, availableWins, usedWinIDs)
-    -- 1. ID Match (Perfect)
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] and win:id() == savedWin.id then
-            return win, "ID"
-        end
-    end
-
-    -- 2. Exact Title Match (Good)
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app and win:title() == savedWin.title then
-                return win, "Exact"
-            end
-        end
-    end
-    
-    -- 3. Fuzzy Title Match (Okay)
-    local bestWin = nil
-    local bestScore = 0
-    local savedNorm = obj.normalizeTitle(savedWin.title)
-    
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app then
-                local currentNorm = obj.normalizeTitle(win:title())
-                local score = obj.calculateSimilarity(savedNorm, currentNorm)
-                if score > 0.5 and score > bestScore then
-                    bestScore = score
-                    bestWin = win
-                end
-            end
-        end
-    end
-    
-    if bestWin then return bestWin, "Fuzzy" end
-    
-    -- 4. App Slotting (Last Resort) - Just find *any* window of same app
-    for _, win in ipairs(availableWins) do
-        if not usedWinIDs[win:id()] then
-            local app = win:application()
-            if app and app:name() == savedWin.app then
-                return win, "Slot"
-            end
-        end
-    end
-    
-    return nil, nil
 end
 
 -- Capture current window layout
@@ -331,45 +193,10 @@ function obj.captureLayout(profileName)
     end
     
     obj.logger.i(string.format("Captured %d windows across spaces", #layout))
-    
-    local profiles = obj.loadProfiles()
+
     local configId = obj.getDisplayConfigId()
-    
-    -- Initialize structure if missing
-    if not profiles[configId] then
-        profiles[configId] = {
-            active = "Default",
-            layouts = {}
-        }
-    end
-    
-    -- Migration check: if old format (direct windows property), move to Default
-    if profiles[configId].windows then
-        profiles[configId].layouts = {}
-        profiles[configId].layouts["Default"] = {
-            windows = profiles[configId].windows,
-            timestamp = profiles[configId].timestamp
-        }
-        profiles[configId].windows = nil
-        profiles[configId].timestamp = nil
-        profiles[configId].active = "Default"
-    end
-    
-    -- Determine target name
-    local targetName = profileName or profiles[configId].active or "Default"
-    
-    -- Save new layout
-    if not profiles[configId].layouts then profiles[configId].layouts = {} end
-    
-    profiles[configId].layouts[targetName] = {
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        windows = layout,
-        display_count = #hs.screen.allScreens()
-    }
-    profiles[configId].active = targetName
-    
-    obj.saveProfiles(profiles)
-    
+    local targetName = obj.store:saveLayout(configId, profileName, layout, #hs.screen.allScreens())
+
     hs.alert.show(string.format("Saved Profile: %s", targetName))
     obj.updateMenubarTitle()
 end
@@ -384,12 +211,8 @@ end
 
 -- Switch to a different profile
 function obj.switchProfile(name)
-    local profiles = obj.loadProfiles()
     local configId = obj.getDisplayConfigId()
-    
-    if profiles[configId] then
-        profiles[configId].active = name
-        obj.saveProfiles(profiles)
+    if obj.store:setActive(configId, name) then
         obj.updateMenubarTitle()
         obj.restoreLayout() -- Auto-restore on switch
     end
@@ -397,91 +220,79 @@ end
 
 -- Restore window layout for current display config
 function obj.restoreLayout()
-    local profiles = obj.loadProfiles()
     local configId = obj.getDisplayConfigId()
-    
-    if not profiles[configId] then
+
+    if not obj.store:hasConfig(configId) then
         hs.alert.show("No profiles for this display setup")
         return
     end
 
-    -- Migration check
-    if profiles[configId].windows then
-        -- Handle legacy format by treating it as Default
-        local windows = profiles[configId].windows
-        -- restore logic below...
-    end
+    local activeName = obj.store:activeProfileName(configId)
+    local layoutData = obj.store:activeLayout(configId)
 
-    local activeName = obj.getActiveProfileName(profiles, configId)
-    local layoutData = nil
-    
-    if profiles[configId].layouts and profiles[configId].layouts[activeName] then
-        layoutData = profiles[configId].layouts[activeName]
-    elseif profiles[configId].windows then
-        -- Legacy fallback
-        layoutData = profiles[configId]
-    end
-    
     if not layoutData then
         hs.alert.show("Profile '" .. activeName .. "' is empty")
         return
     end
     
     local windows = layoutData.windows
-    -- Get ALL windows
-    local allWindows = hs.window.filter.new():setDefaultFilter({}):getWindows()
-    local restoreCount = 0
-    local usedWinIDs = {} -- Track assigned windows
-    local matchStats = {ID=0, Exact=0, Fuzzy=0, Slot=0}
-    
+
+    -- Snapshot live windows into plain records for the matcher; the live
+    -- window rides along on the record for the move step below
+    local candidates = {}
+    for _, win in ipairs(hs.window.filter.new():setDefaultFilter({}):getWindows()) do
+        local app = win:application()
+        table.insert(candidates, {
+            id = win:id(),
+            app = app and app:name() or nil,
+            title = win:title(),
+            win = win
+        })
+    end
+
     -- Map Screens for Current Setup
     local currentScreens = {}
     for _, s in ipairs(hs.screen.allScreens()) do
         currentScreens[s:name()] = s -- fallback by name
         currentScreens[s:getUUID()] = s -- pref by UUID
     end
-    
-    local spaceMap, allSpaces = obj.getSpaceMap()
 
-    for _, savedWin in ipairs(windows) do
-        -- Find Best Match
-        local match, matchType = obj.findBestMatch(savedWin, allWindows, usedWinIDs)
-        
-        if match then
-            usedWinIDs[match:id()] = true
-            matchStats[matchType] = matchStats[matchType] + 1
-            
-            -- 1. Identify Target Screen
-            local targetScreen = currentScreens[savedWin.screen_uuid] or currentScreens[savedWin.screen]
-            
-            -- 2. Identify Target Space ID
-            local targetSpaceID = nil
-            if targetScreen and savedWin.space_index then
-               targetSpaceID = obj.getSpaceID(targetScreen:getUUID(), savedWin.space_index)
-            end
-            
-            -- 3. Move to Space (if needed and valid)
-            if targetSpaceID then
-                hs.spaces.moveWindowToSpace(match, targetSpaceID)
-                -- Small delay might be needed for space move animation?
-                -- hs.timer.usleep(100000) -- 0.1s
-            end
-            
-            -- 4. Move Frame (Geometry)
-            if targetScreen then
-                match:move(savedWin.frame, targetScreen, true)
-            else
-                -- Fallback to current screen frame only
-                match:setFrame(savedWin.frame)
-            end
-            
-            restoreCount = restoreCount + 1
+    local matches, unmatched = matcher.assign(windows, candidates)
+    local matchStats = {ID=0, Exact=0, Fuzzy=0, Slot=0}
+
+    for _, m in ipairs(matches) do
+        local savedWin = m.saved
+        local match = m.candidate.win
+        matchStats[m.matchType] = matchStats[m.matchType] + 1
+
+        -- 1. Identify Target Screen
+        local targetScreen = currentScreens[savedWin.screen_uuid] or currentScreens[savedWin.screen]
+
+        -- 2. Identify Target Space ID
+        local targetSpaceID = nil
+        if targetScreen and savedWin.space_index then
+           targetSpaceID = obj.getSpaceID(targetScreen:getUUID(), savedWin.space_index)
+        end
+
+        -- 3. Move to Space (if needed and valid)
+        if targetSpaceID then
+            hs.spaces.moveWindowToSpace(match, targetSpaceID)
+        end
+
+        -- 4. Move Frame (Geometry)
+        if targetScreen then
+            match:move(savedWin.frame, targetScreen, true)
         else
-            obj.logger.d("Could not find match for: " .. savedWin.app .. " - " .. savedWin.title)
+            -- Fallback to current screen frame only
+            match:setFrame(savedWin.frame)
         end
     end
-    
-    local msg = string.format("Restored '%s' (%d wins)", activeName, restoreCount)
+
+    for _, savedWin in ipairs(unmatched) do
+        obj.logger.d("Could not find match for: " .. tostring(savedWin.app) .. " - " .. tostring(savedWin.title))
+    end
+
+    local msg = string.format("Restored '%s' (%d wins)", activeName, #matches)
     -- Add detail if matches were imprecise
     if matchStats.Fuzzy > 0 or matchStats.Slot > 0 then
         msg = msg .. string.format("\n(Fuzzy: %d, Slot: %d)", matchStats.Fuzzy, matchStats.Slot)
@@ -512,11 +323,10 @@ function obj.handleUrlEvent(eventName, params)
     elseif action == "switch" and profile then
         obj.switchProfile(profile)
     elseif action == "list" then
-        local profiles = obj.loadProfiles()
-        local configId = obj.getDisplayConfigId()
-        if profiles[configId] and profiles[configId].layouts then
+        local names = obj.store:profileNames(obj.getDisplayConfigId())
+        if #names > 0 then
             local doc = "Available Profiles:\n"
-            for name, _ in pairs(profiles[configId].layouts) do
+            for _, name in ipairs(names) do
                 doc = doc .. "- " .. name .. "\n"
             end
             hs.alert.show(doc)
@@ -532,9 +342,7 @@ end
 
 function obj.updateMenubarTitle()
     if obj.menubar then
-        local configId = obj.getDisplayConfigId()
-        local profiles = obj.loadProfiles()
-        local active = obj.getActiveProfileName(profiles, configId)
+        local active = obj.store:activeProfileName(obj.getDisplayConfigId())
         obj.menubar:setTitle("SB: " .. active)
     end
 end
@@ -548,12 +356,11 @@ function obj.handleScreenChanged()
 
     if obj.restoreTimer then obj.restoreTimer:stop() end
     obj.restoreTimer = hs.timer.doAfter(3, function()
-        local mode = obj.getAutoRestoreMode()
+        local mode = obj.store:autoRestoreMode()
         if mode == "disabled" then return end
 
-        local profiles = obj.loadProfiles()
         local configId = obj.getDisplayConfigId()
-        if not profiles[configId] then
+        if not obj.store:hasConfig(configId) then
             obj.logger.i("No saved profile for display config: " .. configId)
             return
         end
@@ -561,7 +368,7 @@ function obj.handleScreenChanged()
         if mode == "auto" then
             obj.restoreLayout()
         elseif mode == "prompt" then
-            local active = obj.getActiveProfileName(profiles, configId)
+            local active = obj.store:activeProfileName(configId)
             local button = hs.dialog.blockAlert("SnapBack",
                 string.format("Display setup changed. Restore layout '%s'?", active),
                 "Restore", "Not Now")
@@ -576,101 +383,73 @@ function obj.openStorageFolder()
     hs.execute(string.format("open %q", obj.storagePath))
 end
 
--- Show Hotkeys Cheat Sheet
+-- Show Hotkeys Cheat Sheet — derives from the Action Registry
 function obj.showHotkeys()
-    local keys = obj.config.hotkeys
-    local msg = "Current Hotkeys:\n"
-    
-    local function modStr(mods) return table.concat(mods, "+") end
-    
-    if keys.save then msg = msg .. "- Save: " .. modStr(keys.save[1]) .. " + " .. keys.save[2] .. "\n" end
-    if keys.restore then msg = msg .. "- Restore: " .. modStr(keys.restore[1]) .. " + " .. keys.restore[2] .. "\n" end
-    if keys.snapLeft then msg = msg .. "- Snap Left: " .. modStr(keys.snapLeft[1]) .. " + " .. keys.snapLeft[2] .. "\n" end
-    if keys.snapRight then msg = msg .. "- Snap Right: " .. modStr(keys.snapRight[1]) .. " + " .. keys.snapRight[2] .. "\n" end
-    if keys.snapUp then msg = msg .. "- Maximize: " .. modStr(keys.snapUp[1]) .. " + " .. keys.snapUp[2] .. "\n" end
-    
-    hs.alert.show(msg, 5)
+    hs.alert.show(actions.cheatSheet(obj.store:baseModifiers()), 5)
 end
 
--- Helper: Get visual shortcut label
-function obj.getShortcutLabel(keyName)
-    local conf = obj.config.hotkeys[keyName]
-    if not conf then return "" end
-    
-    local mods = conf[1]
-    local key = conf[2]
-    
-    local modMap = {
-        cmd = "⌘", alt = "⌥", ctrl = "⌃", shift = "⇧"
-    }
-    
-    local str = "  "
-    for _, m in ipairs(mods) do
-        str = str .. (modMap[m] or "")
+-- Minimap image: the current display arrangement with the active profile's
+-- saved windows ghosted in — the dropdown's picture of what "snap back" means
+function obj.minimapImage(configId)
+    local screens = {}
+    for _, s in ipairs(hs.screen.allScreens()) do
+        local f = s:fullFrame()
+        table.insert(screens, {
+            x = f.x, y = f.y, w = f.w, h = f.h,
+            name = s:name(), uuid = s:getUUID(),
+        })
     end
-    
-    -- Fix key names for display
-    if key == "Left" then key = "←"
-    elseif key == "Right" then key = "→"
-    elseif key == "Up" then key = "↑"
-    elseif key == "Down" then key = "↓"
-    elseif key == "Return" then key = "⏎"
-    elseif key == "delete" then key = "⌫"
-    end
-    
-    return str .. key
+    local layoutData = obj.store:activeLayout(configId)
+    local windows = layoutData and layoutData.windows or {}
+    return minimap.render(minimap.layout(screens, windows))
 end
 
 -- Helper to build the menu table (extracted for refreshing)
 function obj.buildMenu()
     local configId = obj.getDisplayConfigId()
-    local profiles = obj.loadProfiles()
-    local active = obj.getActiveProfileName(profiles, configId)
-    local restoreMode = obj.getAutoRestoreMode()
-    
+    local active = obj.store:activeProfileName(configId)
+    local profileNames = obj.store:profileNames(configId)
+    local restoreMode = obj.store:autoRestoreMode()
+    local base = obj.store:baseModifiers()
+
     local menuTable = {}
-    
-    -- Helper to make adding items cleaner
-    local function add(title, keyName, fn)
-        local label = title .. obj.getShortcutLabel(keyName)
-        table.insert(menuTable, { title = label, fn = fn })
+
+    -- Minimap at the top; profiles are the product, so the first thing the
+    -- dropdown shows is this setup and where windows will land. Guarded so a
+    -- drawing failure can never take the whole menu down with it.
+    local okMap, mapImage = pcall(obj.minimapImage, configId)
+    if okMap and mapImage then
+        table.insert(menuTable, {
+            image = mapImage,
+            title = "",
+            tooltip = "Current displays with the active profile's saved windows — click to restore",
+            fn = obj.restoreLayout,
+        })
+        table.insert(menuTable, { title = "-" })
     end
 
-    -- Section 1: Halves
-    add("◧  Left", "snapLeft", function() obj.snapWindow("left") end)
-    add("◨  Right", "snapRight", function() obj.snapWindow("right") end)
-    add("⬒  Top", "snapUp", function() obj.snapWindow("top") end) 
-    add("⬓  Bottom", "snapDown", function() obj.snapWindow("bottom") end)
-    table.insert(menuTable, { title = "-" })
+    -- Registry row -> menu item with its shortcut label
+    local function add(row)
+        table.insert(menuTable, {
+            title = row.label .. actions.shortcutLabel(base, row.key),
+            fn = actionFn(row)
+        })
+    end
 
-    -- Section 2: Quarters
-    add("◤  Top Left", "topLeft", function() obj.snapWindow("topLeft") end)
-    add("◥  Top Right", "topRight", function() obj.snapWindow("topRight") end)
-    add("◣  Bottom Left", "bottomLeft", function() obj.snapWindow("bottomLeft") end)
-    add("◢  Bottom Right", "bottomRight", function() obj.snapWindow("bottomRight") end)
-    table.insert(menuTable, { title = "-" })
+    -- Snap sections derive from the Action Registry
+    for _, section in ipairs(actions.menuSections) do
+        for _, row in ipairs(actions.list) do
+            if row.section == section then add(row) end
+        end
+        table.insert(menuTable, { title = "-" })
+    end
 
-    -- Section 3: Thirds
-    add("⅓  Left Third", "leftThird", function() obj.snapWindow("leftThird") end)
-    add("⅓  Center Third", "centerThird", function() obj.snapWindow("centerThird") end)
-    add("⅓  Right Third", "rightThird", function() obj.snapWindow("rightThird") end)
-    table.insert(menuTable, { title = "-" })
-    add("⅔  Left Two Thirds", "leftTwoThirds", function() obj.snapWindow("leftTwoThirds") end)
-    add("⅔  Right Two Thirds", "rightTwoThirds", function() obj.snapWindow("rightTwoThirds") end)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 4: Maximize / Restore / Center
-    add("⤢  Maximize", "maximize", function() obj.snapWindow("maximize") end)
-    add("✛  Center", "center", function() obj.snapWindow("center") end)
-    add("↺  Restore Layout", "restoreLayout", obj.restoreLayout)
-    table.insert(menuTable, { title = "-" })
-
-    -- Section 5: Profiles & Config
+    -- Profiles & Config
     table.insert(menuTable, { title = "Active: " .. active, disabled = true })
-    
-    if profiles[configId] and profiles[configId].layouts then
+
+    if #profileNames > 0 then
         local profileMenu = {}
-        for name, _ in pairs(profiles[configId].layouts) do
+        for _, name in ipairs(profileNames) do
             table.insert(profileMenu, {
                 title = name,
                 checked = (name == active),
@@ -679,10 +458,10 @@ function obj.buildMenu()
         end
         table.insert(menuTable, { title = "Switch Profile ▶", menu = profileMenu })
     end
-    
-    add("Save Current Layout", "save", function() obj.captureLayout(nil) end)
+
+    add(actions.byId("save"))
     table.insert(menuTable, { title = "Save as New Profile...", fn = obj.saveAsNewProfile })
-    
+
     table.insert(menuTable, { title = "-" })
     
     -- Auto-Restore Submenu
@@ -695,10 +474,11 @@ function obj.buildMenu()
         }
     })
     
+    table.insert(menuTable, { title = "⌨  Hotkeys Cheat Sheet", fn = obj.showHotkeys })
     table.insert(menuTable, { title = "⚙  Set Base Modifiers...", fn = obj.configureModifiers })
     table.insert(menuTable, { title = "Open Data Folder...", fn = obj.openStorageFolder })
     table.insert(menuTable, { title = "Reload Config", fn = hs.reload })
-    
+
     return menuTable
 end
 
@@ -713,46 +493,14 @@ function obj.setupMenubar()
     obj.menubar:setMenu(obj.buildMenu)
 end
 
--- Bind Hotkeys
--- Bind Hotkeys
+-- Bind Hotkeys — every registry row, one bind each. Note: this fixes an
+-- old divergence where Up/Down maximized/minimized while the menu's
+-- Top/Bottom snapped to halves; both now snap to halves.
 function obj.bindHotkeys()
-    local keys = obj.config.hotkeys
-    
-    local function bind(keyId, fn)
-        if keys[keyId] then
-            hs.hotkey.bind(keys[keyId][1], keys[keyId][2], fn)
-        end
+    local base = obj.store:baseModifiers()
+    for _, row in ipairs(actions.list) do
+        hs.hotkey.bind(base, row.key, actionFn(row))
     end
-    
-    -- Save & Restore
-    bind("save", function() obj.captureLayout(nil) end)
-    bind("restore", obj.restoreLayout)
-    bind("restoreLayout", obj.restoreLayout) -- Alias for Backspace
-    
-    -- Halves
-    bind("snapLeft", function() obj.snapWindow("left") end)
-    bind("snapRight", function() obj.snapWindow("right") end)
-    bind("snapUp", function() obj.snapWindow("maximize") end)
-    bind("snapDown", function() obj.snapWindow("minimize") end)
-    
-    -- Corners
-    bind("topLeft", function() obj.snapWindow("topLeft") end)
-    bind("topRight", function() obj.snapWindow("topRight") end)
-    bind("bottomLeft", function() obj.snapWindow("bottomLeft") end)
-    bind("bottomRight", function() obj.snapWindow("bottomRight") end)
-    
-    -- Thirds
-    bind("leftThird", function() obj.snapWindow("leftThird") end)
-    bind("centerThird", function() obj.snapWindow("centerThird") end)
-    bind("rightThird", function() obj.snapWindow("rightThird") end)
-    
-    -- Two Thirds
-    bind("leftTwoThirds", function() obj.snapWindow("leftTwoThirds") end)
-    bind("rightTwoThirds", function() obj.snapWindow("rightTwoThirds") end)
-    
-    -- Extras
-    bind("maximize", function() obj.snapWindow("maximize") end)
-    bind("center", function() obj.snapWindow("center") end)
 end
 
 -- SNAP & GRID HELPERS
@@ -766,154 +514,50 @@ obj.lastSnap = {
 function obj.snapWindow(direction)
     local win = hs.window.focusedWindow()
     if not win then return end
-    
-    local currentTime = os.time()
-    local winId = win:id()
-    local f = win:frame()
-    local screen = win:screen()
-    local max = screen:frame()
-    
-    -- Cycle detection: if same window + direction within 2 seconds
-    local isCycle = (obj.lastSnap.winId == winId and 
-                     obj.lastSnap.direction == direction and 
-                     (currentTime - obj.lastSnap.time) < 2)
-    
-    -- Helper to check if window is already in target position
-    local function isAlreadySnapped(targetFrame)
-        local tolerance = 5
-        return math.abs(f.x - targetFrame.x) < tolerance and
-               math.abs(f.y - targetFrame.y) < tolerance and
-               math.abs(f.w - targetFrame.w) < tolerance and
-               math.abs(f.h - targetFrame.h) < tolerance
-    end
-    
-    -- Halves - with cycle to next/prev screen
-    if direction == "left" then
-        local targetFrame = {
-            x = max.x,
-            y = max.y,
-            w = max.w / 2,
-            h = max.h
-        }
-        
-        if isCycle and isAlreadySnapped(targetFrame) then
-            -- Already snapped left, move to prev screen
-            win:moveOneScreenWest()
-            hs.alert.show("◧ Moved to Prev Screen")
-            obj.lastSnap.winId = nil -- Reset to avoid triple-press confusion
-            return
-        else
-            f = targetFrame
-        end
-        
-    elseif direction == "right" then
-        local targetFrame = {
-            x = max.x + (max.w / 2),
-            y = max.y,
-            w = max.w / 2,
-            h = max.h
-        }
-        
-        if isCycle and isAlreadySnapped(targetFrame) then
-            -- Already snapped right, move to next screen
-            win:moveOneScreenEast()
-            hs.alert.show("◨ Moved to Next Screen")
-            obj.lastSnap.winId = nil
-            return
-        else
-            f = targetFrame
-        end
-        
-    elseif direction == "top" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w
-        f.h = max.h / 2
-    elseif direction == "bottom" then
-        f.x = max.x
-        f.y = max.y + (max.h / 2)
-        f.w = max.w
-        f.h = max.h / 2
-        
-    -- Quarters (Corners)
-    elseif direction == "topLeft" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "topRight" then
-        f.x = max.x + (max.w / 2)
-        f.y = max.y
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "bottomLeft" then
-        f.x = max.x
-        f.y = max.y + (max.h / 2)
-        f.w = max.w / 2
-        f.h = max.h / 2
-    elseif direction == "bottomRight" then
-        f.x = max.x + (max.w / 2)
-        f.y = max.y + (max.h / 2)
-        f.w = max.w / 2
-        f.h = max.h / 2
-        
-    -- Thirds
-    elseif direction == "leftThird" then
-        f.x = max.x
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "centerThird" then
-        f.x = max.x + (max.w / 3)
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "rightThird" then
-        f.x = max.x + (max.w / 3) * 2
-        f.y = max.y
-        f.w = max.w / 3
-        f.h = max.h
-    elseif direction == "leftTwoThirds" then
-        f.x = max.x
-        f.y = max.y
-        f.w = (max.w / 3) * 2
-        f.h = max.h
-    elseif direction == "rightTwoThirds" then
-        f.x = max.x + (max.w / 3)
-        f.y = max.y
-        f.w = (max.w / 3) * 2
-        f.h = max.h
-        
-    -- Standard
-    elseif direction == "center" then
-        f.w = max.w * 0.7
-        f.h = max.h * 0.7
-        f.x = max.x + (max.w - f.w) / 2
-        f.y = max.y + (max.h - f.h) / 2
-    elseif direction == "maximize" then
-        f = max
-    elseif direction == "minimize" then
+
+    if direction == "minimize" then
         win:minimize()
         return
     end
-    
-    win:setFrame(f)
-    
-    -- Update last snap tracking
+
+    local now = os.time()
+    local winId = win:id()
+    local target = geometry.frameFor(direction, win:screen():frame())
+    if not target then return end
+
+    -- Pressing the same direction twice on an already-snapped window walks
+    -- it to the adjacent screen, landing on the near column so repeated
+    -- presses traverse the whole display setup half-by-half
+    local cycle = geometry.cycle[direction]
+    if cycle and geometry.isCycle(obj.lastSnap, winId, direction, now)
+       and geometry.framesMatch(win:frame(), target) then
+        local nextScreen = cycle.toward == "west" and win:screen():toWest()
+                                                   or win:screen():toEast()
+        if nextScreen then
+            win:setFrame(geometry.frameFor(cycle.landing, nextScreen:frame()))
+            hs.alert.show(cycle.toward == "west" and "◨ Prev Screen" or "◧ Next Screen")
+            -- Keep lastSnap armed so the walk continues press by press
+            obj.lastSnap = { winId = winId, direction = direction, time = now }
+        end
+        return
+    end
+
+    win:setFrame(target)
+
     obj.lastSnap = {
         winId = winId,
         direction = direction,
-        time = currentTime
+        time = now
     }
 end
 
 -- Init
 function obj.start()
     obj.ensureStorageExists()
-    
+
     -- Performance: Disable window animations for instant snapping
     hs.window.animationDuration = 0
-    
+
     obj.setupMenubar()
     obj.bindHotkeys()
     
