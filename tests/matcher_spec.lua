@@ -23,7 +23,24 @@ return function(t, root)
     t.test("similarity: substring containment scores 0.9", function()
         t.ok(matcher.similarity("short", "longer with short inside") > 0.8)
         t.eq(matcher.similarity("abc", "xyz"), 0.0)
-        t.eq(matcher.similarity("", ""), 1.0)
+    end)
+
+    t.test("similarity: empty normalized titles carry no signal", function()
+        t.eq(matcher.similarity("", "anything"), 0.0)
+        t.eq(matcher.similarity("anything", ""), 0.0)
+        t.eq(matcher.similarity("", ""), 0.0)
+    end)
+
+    t.test("cascade: digit-only title slots instead of fuzzy-stealing", function()
+        -- "14:32" normalizes to "" — it must NOT fuzzy-match the busy
+        -- document window; app slotting picks the first free candidate
+        local cand, matchType = matcher.findBestMatch(
+            saved(1, "Terminal", "14:32"),
+            { saved(7, "Terminal", "important long-running job"),
+              saved(8, "Terminal", "scratch") },
+            {})
+        t.eq(matchType, "Slot")
+        t.eq(cand.id, 7)
     end)
 
     t.test("cascade: ID match wins even when titles changed", function()

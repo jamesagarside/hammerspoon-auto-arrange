@@ -26,7 +26,10 @@ end
 function matcher.similarity(s1, s2)
     local longer = #s1 > #s2 and s1 or s2
     local shorter = #s1 > #s2 and s2 or s1
-    if #longer == 0 then return 1.0 end
+    -- A title that normalizes to nothing ("12:34", "(3)") would substring-
+    -- match anything; empty means "no signal", not "perfect match" — let
+    -- these fall through to app slotting instead of stealing a window
+    if #shorter == 0 then return 0.0 end
 
     -- Exact substring check is usually good enough for windows
     if string.find(longer, shorter, 1, true) then

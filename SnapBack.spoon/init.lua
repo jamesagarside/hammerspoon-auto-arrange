@@ -98,9 +98,6 @@ end
 function obj.setAutoRestoreMode(mode)
     obj.store:setSetting("autoRestoreMode", mode)
     hs.alert.show("Auto-Restore: " .. mode:upper())
-    -- Pass the builder function, not its result — a table here would freeze
-    -- the menu into a static snapshot that never reflects later changes
-    obj.menubar:setMenu(obj.buildMenu)
 end
 
 -- Resolve a registry row to its callable. Snap rows dispatch to
@@ -128,11 +125,21 @@ function obj.getDisplayConfigId()
     return table.concat(identifiers, "_")
 end
 
+-- hs.spaces wraps private macOS APIs that can fail or throw on newer macOS
+-- versions; guard every call so Spaces trouble degrades a capture/restore
+-- (windows land on the current Space) instead of aborting it
+local function spacesCall(fn, ...)
+    local ok, result = pcall(fn, ...)
+    if ok then return result end
+    obj.logger.w("hs.spaces call failed: " .. tostring(result))
+    return nil
+end
+
 -- Helper: Get Space Index map
 -- Returns: { [spaceID] = index } and { [screenUUID] = {spaceID, ...} }
 function obj.getSpaceMap()
     local map = {}
-    local spaces = hs.spaces.allSpaces()
+    local spaces = spacesCall(hs.spaces.allSpaces) or {}
     for screenUUID, spaceIDs in pairs(spaces) do
         for i, spaceID in ipairs(spaceIDs) do
             map[spaceID] = i
@@ -143,7 +150,7 @@ end
 
 -- Helper: Get Space ID from Screen UUID and Index
 function obj.getSpaceID(screenUUID, index)
-    local spaces = hs.spaces.allSpaces()
+    local spaces = spacesCall(hs.spaces.allSpaces) or {}
     if spaces[screenUUID] and spaces[screenUUID][index] then
         return spaces[screenUUID][index]
     end
@@ -166,7 +173,7 @@ function obj.captureLayout(profileName)
             local screenUUID = winScreen and winScreen:getUUID() or "Unknown"
             
             -- Determine Space Index
-            local winSpaces = hs.spaces.windowSpaces(win)
+            local winSpaces = spacesCall(hs.spaces.windowSpaces, win)
             local spaceIndex = 1 -- default
             if winSpaces and #winSpaces > 0 then
                 local sid = winSpaces[1] -- assume primary space
@@ -209,9 +216,18 @@ function obj.saveAsNewProfile()
     end
 end
 
--- Switch to a different profile
+-- Switch to a different profile. Only known names are accepted — a typo in
+-- a Stream Deck URL would otherwise activate a brand-new empty profile
 function obj.switchProfile(name)
     local configId = obj.getDisplayConfigId()
+    local exists = false
+    for _, n in ipairs(obj.store:profileNames(configId)) do
+        if n == name then exists = true end
+    end
+    if not exists then
+        hs.alert.show("No profile named '" .. tostring(name) .. "' for this display setup")
+        return
+    end
     if obj.store:setActive(configId, name) then
         obj.updateMenubarTitle()
         obj.restoreLayout() -- Auto-restore on switch
@@ -259,6 +275,7 @@ function obj.restoreLayout()
 
     local matches, unmatched = matcher.assign(windows, candidates)
     local matchStats = {ID=0, Exact=0, Fuzzy=0, Slot=0}
+    local spaceFailures = 0
 
     for _, m in ipairs(matches) do
         local savedWin = m.saved
@@ -276,7 +293,9 @@ function obj.restoreLayout()
 
         -- 3. Move to Space (if needed and valid)
         if targetSpaceID then
-            hs.spaces.moveWindowToSpace(match, targetSpaceID)
+            if spacesCall(hs.spaces.moveWindowToSpace, match, targetSpaceID) == nil then
+                spaceFailures = spaceFailures + 1
+            end
         end
 
         -- 4. Move Frame (Geometry)
@@ -296,6 +315,10 @@ function obj.restoreLayout()
     -- Add detail if matches were imprecise
     if matchStats.Fuzzy > 0 or matchStats.Slot > 0 then
         msg = msg .. string.format("\n(Fuzzy: %d, Slot: %d)", matchStats.Fuzzy, matchStats.Slot)
+    end
+    if spaceFailures > 0 then
+        msg = msg .. string.format("\n(Spaces unavailable for %d window%s)",
+            spaceFailures, spaceFailures == 1 and "" or "s")
     end
     hs.alert.show(msg)
 end
@@ -520,7 +543,9 @@ function obj.snapWindow(direction)
         return
     end
 
-    local now = os.time()
+    -- Sub-second clock: os.time()'s 1s resolution made the 2s cycle window
+    -- effectively 1-3s depending on where in a second the presses landed
+    local now = hs.timer.secondsSinceEpoch()
     local winId = win:id()
     local target = geometry.frameFor(direction, win:screen():frame())
     if not target then return end
@@ -560,50 +585,6 @@ function obj.start()
 
     obj.setupMenubar()
     obj.bindHotkeys()
-    
-    -- Drag-to-Edge Snapping (Mouse Up Listener)
-    obj.dragWatcher = hs.eventtap.new({hs.eventtap.event.types.leftMouseUp}, function(e)
-        -- Only check if we are dragging a window (this is hard to detect perfectly without accessibility, 
-        -- but checking cursor position at edge is a good proxy for "User dropped something at the edge")
-        
-        local pt = hs.mouse.getAbsolutePosition()
-        local screen = hs.mouse.getCurrentScreen()
-        local frame = screen:frame()
-        local edgeThreshold = 20
-        
-        local action = nil
-        
-        -- Check Edges
-        if pt.x < frame.x + edgeThreshold then action = "left"
-        elseif pt.x > frame.x + frame.w - edgeThreshold then action = "right"
-        elseif pt.y < frame.y + edgeThreshold then action = "maximize"
-        end
-        
-        -- If at an edge, find the top window at that point and snap it
-        if action then
-            -- Small delay to let the OS process the "drop" event first, 
-            -- otherwise the window might not report its new position or focus correctly yet.
-            hs.timer.doAfter(0.1, function()
-                local win = hs.window.focusedWindow()
-                if win and win:isStandard() then
-                   -- Double check constraints: snap only if the user actually dropped it AT the edge
-                   -- Since we handle this on MouseUp, we assume they just released it.
-                   
-                   -- We use an alert to confirm action to be unobtrusive
-                   if action == "maximize" then
-                       obj.snapWindow("maximize")
-                       hs.alert.show("Snapped: Maximize")
-                   else
-                       obj.snapWindow(action)
-                       hs.alert.show("Snapped: " .. action)
-                   end
-                end
-            end)
-        end
-        
-        return false -- Propagate event
-    end)
-    -- obj.dragWatcher:start() -- DISABLED temporarily to debug responsiveness
 
     -- Watch for display changes
     obj.screenWatcher = hs.screen.watcher.new(obj.handleScreenChanged)
