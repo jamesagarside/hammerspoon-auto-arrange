@@ -66,7 +66,7 @@ Default base modifiers: **⌃⌥⌘** (Ctrl + Alt + Cmd) — customizable via **
 | :--- | :--- | :--- |
 | **Save Layout** | `S` | Save current window positions to the active profile |
 | **Restore Layout** | `R` or `⌫` | Restore the active profile |
-| **Left / Right Half** | `←` / `→` | Snap to half; press twice to move to prev/next screen |
+| **Left / Right Half** | `←` / `→` | Snap to half; keep pressing to walk across screens half-by-half |
 | **Top / Bottom Half** | `↑` / `↓` | Snap to top/bottom half (matches the menu; use macOS `⌘M` to minimize) |
 | **Corners** | `U` `I` `J` `K` | Top-left / top-right / bottom-left / bottom-right quarter |
 | **Thirds** | `D` `F` `G` | Left / center / right third |

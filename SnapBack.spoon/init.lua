@@ -494,19 +494,20 @@ function obj.snapWindow(direction)
     local target = geometry.frameFor(direction, win:screen():frame())
     if not target then return end
 
-    -- Pressing the same direction twice on an already-snapped window
-    -- cycles it to the adjacent screen (left/right only)
-    local cycleMove = geometry.cycleMove[direction]
-    if cycleMove and geometry.isCycle(obj.lastSnap, winId, direction, now)
+    -- Pressing the same direction twice on an already-snapped window walks
+    -- it to the adjacent screen, landing on the near column so repeated
+    -- presses traverse the whole display setup half-by-half
+    local cycle = geometry.cycle[direction]
+    if cycle and geometry.isCycle(obj.lastSnap, winId, direction, now)
        and geometry.framesMatch(win:frame(), target) then
-        if cycleMove == "west" then
-            win:moveOneScreenWest()
-            hs.alert.show("◧ Moved to Prev Screen")
-        else
-            win:moveOneScreenEast()
-            hs.alert.show("◨ Moved to Next Screen")
+        local nextScreen = cycle.toward == "west" and win:screen():toWest()
+                                                   or win:screen():toEast()
+        if nextScreen then
+            win:setFrame(geometry.frameFor(cycle.landing, nextScreen:frame()))
+            hs.alert.show(cycle.toward == "west" and "◨ Prev Screen" or "◧ Next Screen")
+            -- Keep lastSnap armed so the walk continues press by press
+            obj.lastSnap = { winId = winId, direction = direction, time = now }
         end
-        obj.lastSnap.winId = nil -- Reset to avoid triple-press confusion
         return
     end
 

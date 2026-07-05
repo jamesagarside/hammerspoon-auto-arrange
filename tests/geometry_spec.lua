@@ -53,10 +53,19 @@ return function(t, root)
         t.ok(not geometry.isCycle({ time = 0 }, 7, "left", 101), "no previous snap")
     end)
 
-    t.test("cycleMove: only horizontal halves cycle across screens", function()
-        t.eq(geometry.cycleMove.left, "west")
-        t.eq(geometry.cycleMove.right, "east")
-        t.eq(geometry.cycleMove.top, nil)
-        t.eq(geometry.cycleMove.maximize, nil)
+    t.test("cycle: only horizontal halves walk across screens", function()
+        t.eq(geometry.cycle.top, nil)
+        t.eq(geometry.cycle.maximize, nil)
+        t.eq(geometry.cycle.left.toward, "west")
+        t.eq(geometry.cycle.right.toward, "east")
+    end)
+
+    t.test("cycle: lands on the near column of the adjacent screen", function()
+        -- Walking right continues on the LEFT half (and mirrored), so
+        -- repeated presses traverse the display setup half-by-half
+        t.eq(geometry.cycle.right.landing, "left")
+        t.eq(geometry.cycle.left.landing, "right")
+        t.ok(geometry.directions[geometry.cycle.right.landing], "landing is a real direction")
+        t.ok(geometry.directions[geometry.cycle.left.landing], "landing is a real direction")
     end)
 end

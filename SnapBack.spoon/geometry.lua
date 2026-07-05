@@ -31,8 +31,14 @@ local FRACTIONS = {
 
 geometry.directions = FRACTIONS
 
--- Pressing the same direction twice moves the window to the adjacent screen.
-geometry.cycleMove = { left = "west", right = "east" }
+-- Pressing the same direction twice walks the window across screens column
+-- by column: a right-half window continues to the LEFT half of the screen
+-- to the east (and mirrored for left), so repeated presses traverse the
+-- whole display setup half-by-half.
+geometry.cycle = {
+    left  = { toward = "west", landing = "right" },
+    right = { toward = "east", landing = "left" },
+}
 
 --- geometry.frameFor(direction, screen) -> frame | nil
 --- Target frame for a snap direction within a screen frame {x, y, w, h}.
