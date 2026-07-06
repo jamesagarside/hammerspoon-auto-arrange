@@ -34,6 +34,49 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
+      # A release must not ship with stale docs: the Spoon version and the
+      # changelog have to be updated for the tag being released, or we fail
+      # here before anything is published.
+      - name: Verify docs are current for this release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          if ! grep -Fq "obj.version = \"$VERSION\"" SnapBack.spoon/init.lua; then
+            echo "::error::obj.version in SnapBack.spoon/init.lua does not match $TAG — bump it before releasing"
+            exit 1
+          fi
+          if ! grep -q "^## $TAG " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for $TAG — document the release before shipping it"
+            exit 1
+          fi
+
+      - name: Build release notes from the changelog
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          awk -v tag="$TAG" '
+            index($0, "## " tag " ") == 1 { found = 1; next }
+            /^## / && found { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_BODY.md
+          cat >> RELEASE_BODY.md <<'EOF'
+
+          ## Installation
+
+          1. Download **SnapBack.spoon.zip** from the assets below and unzip it.
+          2. Double-click `SnapBack.spoon` to install it (Hammerspoon will handle this automatically).
+          3. Or manually move `SnapBack.spoon` to `~/.hammerspoon/Spoons/`.
+          4. Add the following to your `~/.hammerspoon/init.lua`:
+
+          ```lua
+          hs.loadSpoon("SnapBack")
+          spoon.SnapBack:start()
+          ```
+
+          5. Reload Hammerspoon.
+          EOF
+
       - name: Package SnapBack.spoon
         run: |
           zip -r SnapBack.spoon.zip SnapBack.spoon/
@@ -43,19 +86,6 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: SnapBack ${{ steps.version.outputs.tag }}
-          body: |
-            ## Installation
-
-            1. Download **SnapBack.spoon.zip** from the assets below and unzip it.
-            2. Double-click `SnapBack.spoon` to install it (Hammerspoon will handle this automatically).
-            3. Or manually move `SnapBack.spoon` to `~/.hammerspoon/Spoons/`.
-            4. Add the following to your `~/.hammerspoon/init.lua`:
-
-            ```lua
-            hs.loadSpoon("SnapBack")
-            spoon.SnapBack:start()
-            ```
-
-            5. Reload Hammerspoon.
+          body_path: RELEASE_BODY.md
           files: SnapBack.spoon.zip
           generate_release_notes: true

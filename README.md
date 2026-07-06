@@ -118,6 +118,10 @@ Requires [Hammerspoon](https://www.hammerspoon.org/) (free) and Accessibility pe
 
 Looking for a free, open-source alternative to Magnet? For snapping alone, [Rectangle](https://rectangleapp.com/) is excellent and simpler to install. SnapBack is for people whose window arrangement gets destroyed by docking, undocking, or display sleep and who want it to come back on its own — plus Stream Deck/URL automation, per-display-setup layout profiles, and the hackability of Hammerspoon underneath.
 
+## Changelog
+
+Release history lives in [CHANGELOG.md](CHANGELOG.md). Every release must have an entry — the release workflow refuses to tag a version whose changelog entry or `obj.version` is missing, so the docs can't fall behind the releases.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
